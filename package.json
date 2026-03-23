@@ -1,0 +1,15 @@
+{
+  "name": "boss-zhipin-auto-greet",
+  "version": "3.0.0",
+  "description": "BOSS直聘智能招呼助手 Chrome Extension（MV3）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "build:userscript": "cross-env BUILD_MODE=userscript rollup -c",
+    "dev": "rollup -c --watch"
+  },
+  "devDependencies": {
+    "rollup": "^4.0.0"
+  }
+}

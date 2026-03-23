@@ -1,0 +1,54 @@
+/* ====== Content Script CSS — 卡片高亮样式（零 UI 注入） ====== */
+
+/* 目标候选人卡片边框高亮 */
+.boss-helper-target {
+    position: relative;
+}
+
+/* C9 院校 */
+.bh-target-c9 {
+    box-shadow: inset 4px 0 0 #f53f3f, 0 0 12px rgba(245, 63, 63, 0.08) !important;
+    background: linear-gradient(90deg, rgba(245, 63, 63, 0.04) 0%, transparent 30%) !important;
+}
+
+/* 985 院校 */
+.bh-target-985 {
+    box-shadow: inset 4px 0 0 #ff7d00, 0 0 12px rgba(255, 125, 0, 0.08) !important;
+    background: linear-gradient(90deg, rgba(255, 125, 0, 0.04) 0%, transparent 30%) !important;
+}
+
+/* 211 院校 */
+.bh-target-211 {
+    box-shadow: inset 4px 0 0 #3370ff, 0 0 12px rgba(51, 112, 255, 0.08) !important;
+    background: linear-gradient(90deg, rgba(51, 112, 255, 0.04) 0%, transparent 30%) !important;
+}
+
+/* 角标 */
+.boss-helper-target::before {
+    position: absolute;
+    top: 8px;
+    left: -2px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    padding: 2px 10px 2px 6px;
+    border-radius: 0 12px 12px 0;
+    z-index: 10;
+    letter-spacing: 0.5px;
+    box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.bh-target-c9::before {
+    content: attr(data-school-label);
+    background: linear-gradient(135deg, #f53f3f, #ff6b6b);
+}
+
+.bh-target-985::before {
+    content: attr(data-school-label);
+    background: linear-gradient(135deg, #ff7d00, #ffab40);
+}
+
+.bh-target-211::before {
+    content: attr(data-school-label);
+    background: linear-gradient(135deg, #3370ff, #6698ff);
+}
