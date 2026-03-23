@@ -141,6 +141,7 @@ function filterByDOM() {
     const cards = queryAllFallback(TARGET_CARD_SELECTORS);
     const seenDomIds = new Set();
     let count = 0;
+    const schoolSamples = [];
 
     cards.forEach((card) => {
         clearCardTargetState(card);
@@ -151,6 +152,9 @@ function filterByDOM() {
         seenDomIds.add(encryptGeekId);
 
         const schoolText = extractSchoolText(card);
+        if (schoolText && schoolSamples.length < 5) {
+            schoolSamples.push(schoolText);
+        }
         const enabledLabels = config.enabledSchoolLabels || ['C9', '985', '211'];
         const matched = matchSchool(schoolText, config.targetSchools, enabledLabels);
         const current = geekDataMap.get(encryptGeekId);
@@ -183,6 +187,9 @@ function filterByDOM() {
     }
 
     addLog('info', `DOM扫描完成：扫描 ${cards.length} 张卡片，命中 ${count} 名目标候选人`);
+    if (cards.length > 0 && count === 0 && schoolSamples.length > 0) {
+        addLog('info', `学校字段样本：${schoolSamples.join(' | ')}`);
+    }
     return count;
 }
 
@@ -241,7 +248,23 @@ function getOrCreateCardId(card, name) {
         const link = card.querySelector('a[href*="geek"]');
         if (link) {
             const match = link.href.match(/\/([a-zA-Z0-9_-]+)\.html/);
-            if (match) encryptGeekId = match[1];
+            if (match) {
+                encryptGeekId = match[1];
+            } else if (link.href.includes('?')) {
+                try {
+                    const urlParams = new URLSearchParams(link.href.split('?')[1]);
+                    encryptGeekId = urlParams.get('geekId') || urlParams.get('encryptGeekId') || '';
+                } catch (e) {
+                    encryptGeekId = '';
+                }
+            }
+        }
+    }
+
+    if (!encryptGeekId) {
+        const btn = card.querySelector('[ka*="greet"], .btn-greet');
+        if (btn) {
+            encryptGeekId = btn.getAttribute('data-geekid') || btn.getAttribute('data-encryptid') || '';
         }
     }
 

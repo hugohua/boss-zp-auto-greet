@@ -31,7 +31,7 @@ function copyPublicPlugin() {
 const extensionConfig = [
     // 1. Content script (ISOLATED world)
     {
-        input: 'src/content.js',
+        input: 'src/extension-content.js',
         output: {
             file: 'dist/content.js',
             format: 'iife',
