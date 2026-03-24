@@ -23,6 +23,8 @@ const DEFAULTS = {
     workHoursEnabled: false,
     workHoursStart: 9,
     workHoursEnd: 18,
+    // 风控：后台持续运行开关
+    runInBackground: false,
     // 风控：行为模拟开关
     behaviorSimEnabled: true,
     // 招呼语模板列表

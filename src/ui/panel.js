@@ -87,10 +87,14 @@ function buildPanelHTML(config) {
             <span class="bh-switch-ui"></span><span class="bh-switch-text">列表自动翻页提取</span>
           </label>
         </div>
-        <div class="bh-switch-group mb-12">
+        <div class="bh-switch-group mb-12" style="display:flex; flex-direction:column; gap:8px;">
           <label class="bh-switch-label">
             <input type="checkbox" id="bh-behavior-sim" ${config.behaviorSimEnabled ? 'checked' : ''} class="bh-switch-input">
             <span class="bh-switch-ui"></span><span class="bh-switch-text">拟人化风控模拟</span>
+          </label>
+          <label class="bh-switch-label">
+            <input type="checkbox" id="bh-run-in-bg" ${config.runInBackground ? 'checked' : ''} class="bh-switch-input">
+            <span class="bh-switch-ui"></span><span class="bh-switch-text">后台持续运行 (可能增加曝光风险)</span>
           </label>
           <label class="bh-switch-label" style="display:none;">
             <input type="checkbox" id="bh-work-hours" ${config.workHoursEnabled ? 'checked' : ''} class="bh-switch-input">
@@ -324,6 +328,7 @@ function saveSettings() {
     autoLoadMore: document.getElementById('bh-auto-load').checked,
     workHoursEnabled: document.getElementById('bh-work-hours').checked,
     behaviorSimEnabled: document.getElementById('bh-behavior-sim').checked,
+    runInBackground: document.getElementById('bh-run-in-bg').checked,
     targetSchools: parsedSchools,
     enabledSchoolLabels: enabledLabels,
   });

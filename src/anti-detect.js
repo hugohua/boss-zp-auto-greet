@@ -156,8 +156,8 @@ export function safetyCheck() {
     }
 
     // 页面聚焦检测
-    if (document.hidden) {
-        return { safe: false, reason: '页面在后台，暂停操作' };
+    if (document.hidden && !config.runInBackground) {
+        return { safe: false, reason: '页面在后台，且未开启后台持续运行，暂停操作' };
     }
 
     return { safe: true, reason: '' };
@@ -265,7 +265,8 @@ function scheduleNextBehavior() {
 }
 
 function performBackgroundBehavior() {
-    if (document.hidden) return; // 后台不执行
+    const config = getConfig();
+    if (document.hidden && !config.runInBackground) return; // 后台不执行且未开启持续运行
 
     // 随机选一个行为
     const roll = Math.random();
