@@ -1,20 +1,63 @@
 /**
  * 候选人筛选模块
  * 通过 API 拦截获取候选人数据 + DOM 回退解析
+ * 支持推荐页和聊天页的目标院校高亮
  */
 
 import { logger, queryAllFallback } from './utils.js';
-import { getConfig, matchSchool, getRecords } from './config.js';
+import { getConfig, matchSchool } from './config.js';
 
 // ====== 状态 ======
 const geekDataMap = new Map(); // geekId -> candidateInfo
 let apiInterceptInstalled = false;
 let onCandidatesUpdated = null; // 回调
+let onChatGeekInfoUpdated = null; // 聊天页 geek/info 回调
+
+// ====== 学校缓存 ======
+const SCHOOL_CACHE_KEY = 'boss_helper_school_cache';
+
+function loadSchoolCache() {
+    try {
+        if (typeof GM_getValue === 'function') {
+            return GM_getValue(SCHOOL_CACHE_KEY, {});
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        const val = localStorage.getItem(SCHOOL_CACHE_KEY);
+        return val ? JSON.parse(val) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function saveSchoolCache(cache) {
+    try {
+        if (typeof GM_setValue === 'function') {
+            GM_setValue(SCHOOL_CACHE_KEY, cache);
+            return;
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        localStorage.setItem(SCHOOL_CACHE_KEY, JSON.stringify(cache));
+    } catch (e) { /* ignore */ }
+}
+
+function addToSchoolCache(uid, name, school, schoolLabel) {
+    const cache = loadSchoolCache();
+    cache[String(uid)] = { name, school, schoolLabel, ts: Date.now() };
+    // 同时用名字做 key，便于 DOM 匹配
+    if (name) cache['name_' + name] = { uid, school, schoolLabel, ts: Date.now() };
+    saveSchoolCache(cache);
+}
 
 // ====== 公开 API ======
 
 export function setOnCandidatesUpdated(cb) {
     onCandidatesUpdated = cb;
+}
+
+export function setOnChatGeekInfoUpdated(cb) {
+    onChatGeekInfoUpdated = cb;
 }
 
 export function getGeekDataMap() {
@@ -28,6 +71,9 @@ export function installApiInterceptor() {
     if (apiInterceptInstalled) return;
     apiInterceptInstalled = true;
 
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+
     // 注意：anti-detect.js 也会覆写 open/send，需要确保初始化顺序
     // 这里监听的是 response 而非 request，不会冲突
 
@@ -38,6 +84,8 @@ export function installApiInterceptor() {
         return origXhrOpen.call(this, method, url, ...rest);
     };
 
+    const origAddEventListener = XMLHttpRequest.prototype.addEventListener;
+
     // 拦截 load 事件来读取响应
     const origSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function (body) {
@@ -46,12 +94,33 @@ export function installApiInterceptor() {
                 try {
                     const data = JSON.parse(this.responseText);
                     if (data.code === 0 && data.zpData) {
-                        const list = data.zpData.geekList || data.zpData.resultList || data.zpData.list || [];
-                        parseApiCandidates(list);
+                        parseApiCandidates(data.zpData);
                     }
                 } catch (e) {
                     // 响应解析失败，忽略
                 }
+            });
+        }
+        // 拦截聊天页 geek/info 接口
+        if (this._filterUrl && isChatGeekInfoApi(this._filterUrl)) {
+            this.addEventListener('load', function () {
+                try {
+                    const data = JSON.parse(this.responseText);
+                    if (data.code === 0 && data.zpData) {
+                        parseChatGeekInfo(data.zpData);
+                    }
+                } catch (e) { /* ignore */ }
+            });
+        }
+        // 拦截聊天列表接口，触发列表扫描
+        if (this._filterUrl && isChatListApi(this._filterUrl)) {
+            this.addEventListener('load', function () {
+                try {
+                    const data = JSON.parse(this.responseText);
+                    if (data.code === 0 && data.zpData) {
+                        parseChatFriendList(data.zpData);
+                    }
+                } catch (e) { /* ignore */ }
             });
         }
         return origSend.call(this, body);
@@ -66,10 +135,20 @@ function isRecommendApi(url) {
         url.includes('/wapi/zpgeek/search/');
 }
 
+function isChatGeekInfoApi(url) {
+    return url.includes('/wapi/zpjob/chat/geek/info');
+}
+
+function isChatListApi(url) {
+    return url.includes('/wapi/zprelation/friend/getBossFriendListV2') ||
+        url.includes('/wapi/zprelation/friend/filterByLabel');
+}
+
 /**
  * 从 API 响应中解析候选人数据
  */
-function parseApiCandidates(list) {
+function parseApiCandidates(zpData) {
+    const list = zpData.geekList || zpData.resultList || zpData.list || [];
     if (!list.length) return;
 
     const config = getConfig();
@@ -101,6 +180,11 @@ function parseApiCandidates(list) {
             const key = info.encryptGeekId || info.geekId;
             geekDataMap.set(key, info);
         }
+
+        // 将目标院校候选人写入持久化缓存（供聊天页使用）
+        if (info.isTarget && geek.uid) {
+            addToSchoolCache(geek.uid, info.name, info.school, info.schoolLabel);
+        }
     }
 
     logger.info(`API 解析: 获取 ${list.length} 名候选人，目标院校 ${targetCount} 名`);
@@ -108,12 +192,48 @@ function parseApiCandidates(list) {
 }
 
 /**
+ * 解析聊天页 geek/info 接口响应，提取学校数据并缓存
+ */
+function parseChatGeekInfo(zpData) {
+    const data = zpData.data;
+    if (!data || !data.uid) return;
+
+    const config = getConfig();
+    const school = data.school || '';
+    const schoolMatch = matchSchool(school, config);
+
+    if (schoolMatch) {
+        addToSchoolCache(data.uid, data.geekName || data.name || '', school, schoolMatch.label);
+        logger.info(`聊天 geek/info: ${data.geekName || data.name || data.uid} → ${school} [${schoolMatch.label}]`);
+    }
+
+    // 触发右侧面板高亮和左侧列表刷新
+    if (onChatGeekInfoUpdated) {
+        onChatGeekInfoUpdated({ uid: data.uid, name: data.geekName || data.name || '', school, schoolMatch });
+    }
+}
+
+/**
+ * 解析聊天列表好友接口，触发左侧列表扫描
+ */
+function parseChatFriendList(zpData) {
+    const list = zpData.friendList || [];
+    if (!list.length) return;
+
+    logger.info(`聊天列表 API: 获取 ${list.length} 名联系人，触发列表扫描`);
+    // 触发聊天列表 DOM 扫描
+    if (onChatGeekInfoUpdated) {
+        onChatGeekInfoUpdated({ type: 'listRefresh' });
+    }
+}
+
+/**
  * DOM 回退筛选（当 API 拦截未生效时使用）
  */
 export function filterByDOM() {
+    document.body.classList.add('bh-recommend-mode');
+    document.body.classList.remove('bh-chat-mode');
     const config = getConfig();
-
-    // 使用 queryAllFallback 策略（与老版本一致）：逐个选择器尝试，第一个命中即返回
     const cardSelectors = [
         '.recommend-card-wrap',
         '.card-item',
@@ -122,68 +242,36 @@ export function filterByDOM() {
         '[class*="geek-card"]',
     ];
 
-    let cards = [];
-    for (const sel of cardSelectors) {
-        try {
-            const els = document.querySelectorAll(sel);
-            if (els.length > 0) {
-                cards = Array.from(els);
-                logger.info(`[DOM诊断] 选择器 "${sel}" 命中 ${cards.length} 张卡片`);
-                break;
-            }
-        } catch (e) { /* 忽略 */ }
-    }
-
-    // 诊断日志
-    logger.info(`[DOM诊断] querySelectorAll 命中 ${cards.length} 张卡片`);
-
+    const cards = queryAllFallback(cardSelectors);
     let targetCount = 0;
 
-    cards.forEach((card, idx) => {
+    cards.forEach(card => {
+        // 尝试多种选择器获取学校信息
+        const schoolSelectors = [
+            '[class*="school"]',
+            '[class*="edu"]',
+            '.info-school',
+            '.geek-school',
+        ];
+
         let schoolText = '';
-        let matchStrategy = '';
-
-        // ====== 策略1：精确定位 edu-exps 中的学校名 span ======
-        const eduContentSpans = card.querySelectorAll('.edu-exps .join-text-wrap.content > span:first-child');
-        if (eduContentSpans.length > 0) {
-            schoolText = eduContentSpans[0].textContent.trim();
-            matchStrategy = '策略1-edu-span';
-        }
-
-        // ====== 策略2：通过专属 class 查找 ======
-        if (!schoolText) {
-            const schoolSelectors = [
-                '[class*="school"]',
-                '.info-school',
-                '.geek-school',
-            ];
-            for (const sel of schoolSelectors) {
-                const el = card.querySelector(sel);
-                if (el) {
-                    schoolText = el.textContent.trim();
-                    matchStrategy = '策略2-' + sel;
-                    break;
-                }
+        for (const sel of schoolSelectors) {
+            const el = card.querySelector(sel);
+            if (el) {
+                schoolText = el.textContent.trim();
+                break;
             }
         }
 
-        // ====== 策略3：从全卡片文本中直接匹配目标院校关键词 ======
         if (!schoolText) {
+            // 尝试从整个卡片文本中匹配学校
             const fullText = card.textContent;
             for (const s of config.targetSchools) {
                 if (fullText.includes(s.name)) {
                     schoolText = s.name;
-                    matchStrategy = '策略3-fullText';
                     break;
                 }
             }
-        }
-
-        // 前 3 张卡片打出详细诊断
-        if (idx < 3) {
-            const nameEl = card.querySelector('[class*="name"]:not([class*="company"])');
-            const nameText = nameEl ? nameEl.textContent.trim() : '?';
-            logger.info(`[DOM诊断] 卡片${idx}: ${nameText} | school="${schoolText}" | via=${matchStrategy || '未匹配'}`);
         }
 
         const schoolMatch = matchSchool(schoolText, config);
@@ -192,11 +280,7 @@ export function filterByDOM() {
         if (isTarget) {
             card.classList.add('boss-helper-target');
             if (schoolMatch) {
-                let labelClass = 'ncustom';
-                if (schoolMatch.label === 'C9') labelClass = 'C9';
-                else if (schoolMatch.label === '985') labelClass = 'n985';
-                else if (schoolMatch.label === '211') labelClass = 'n211';
-
+                const labelClass = schoolMatch.label === '985' ? 'n985' : schoolMatch.label === '211' ? 'n211' : schoolMatch.label;
                 card.classList.add(`bh-target-${labelClass}`);
                 card.setAttribute('data-school-label', schoolMatch.label);
             }
@@ -204,11 +288,7 @@ export function filterByDOM() {
             // 避免重复添加标签
             if (!card.querySelector('.bh-card-label') && schoolMatch) {
                 const labelSpan = document.createElement('span');
-                let labelClass = 'ncustom';
-                if (schoolMatch.label === 'C9') labelClass = 'C9';
-                else if (schoolMatch.label === '985') labelClass = 'n985';
-                else if (schoolMatch.label === '211') labelClass = 'n211';
-
+                const labelClass = schoolMatch.label === '985' ? 'n985' : schoolMatch.label === '211' ? 'n211' : schoolMatch.label;
                 labelSpan.className = `bh-card-label ${labelClass}`;
                 labelSpan.textContent = schoolMatch.label;
 
@@ -286,14 +366,10 @@ export function filterByDOM() {
             }
         } else {
             card.classList.remove('boss-helper-target');
-            const marker = card.querySelector('.bh-target-indicator');
-            if (marker) marker.remove();
         }
     });
 
-    if (cards.length > 0) {
-        logger.info(`DOM 筛选: 扫描 ${cards.length} 张卡片，目标院校 ${targetCount} 名`);
-    }
+    logger.info(`DOM 筛选: 扫描 ${cards.length} 张卡片，目标院校 ${targetCount} 名`);
     if (onCandidatesUpdated) onCandidatesUpdated(geekDataMap);
     return targetCount;
 }
@@ -322,112 +398,150 @@ export function markGreeted(key) {
         info.greetedTime = new Date().toLocaleString();
     }
 }
-let chatListObserver = null;
+
+// ====== 聊天页高亮 ======
 
 /**
- * 监听聊天列表并注入历史标签
+ * 聊天列表左侧卡片高亮（基于缓存匹配）
  */
-export function observeChatList() {
-    const records = getRecords();
-    logger.info(`[ChatList] 初始化，读取到本地发件记录总数: ${records.length}`);
-    if (records.length === 0) return;
-
-    // 建立姓名到学校标签的映射表，提高查找速度
-    const nameToLabel = new Map();
-    for (const r of records) {
-        if (r.schoolLabel && !nameToLabel.has(r.name)) {
-            nameToLabel.set(r.name, {
-                label: r.schoolLabel,
-                school: r.school
-            });
-        }
-    }
-    logger.info(`[ChatList] 构建了有效的高校白名单映射表，包含 ${nameToLabel.size} 个人`);
-
-    // 执行一次全量检查
-    function highlightChatItems() {
-        const chatItems = document.querySelectorAll('.geek-item-wrap .geek-name, .user-list .name, .chat-user .name');
-        if (chatItems.length > 0) {
-            // logger.info(`[ChatList] 当前 DOM 中找到 ${chatItems.length} 个候选人名字框`);
-        }
-
-        let count = 0;
-        chatItems.forEach(nameEl => {
-            const name = nameEl.textContent.trim();
-            const hit = nameToLabel.get(name);
-            if (hit) {
-                // 兼容不同层级的容器
-                const wrap = nameEl.closest('.geek-item-wrap') || nameEl.closest('.user-list-item') || nameEl.parentNode;
-                if (wrap && !wrap.querySelector('.bh-card-label')) {
-                    const labelSpan = document.createElement('span');
-                    let labelClass = 'ncustom';
-                    if (hit.label === 'C9') labelClass = 'C9';
-                    else if (hit.label === '985') labelClass = 'n985';
-                    else if (hit.label === '211') labelClass = 'n211';
-
-                    labelSpan.className = `bh-card-label ${labelClass}`;
-                    labelSpan.textContent = hit.label;
-                    labelSpan.title = hit.school;
-
-                    // 对话列表的空间很窄，缩小一点并靠右
-                    labelSpan.style.display = 'inline-block';
-                    labelSpan.style.transform = 'scale(0.85)';
-                    labelSpan.style.transformOrigin = 'left center';
-                    labelSpan.style.marginLeft = '4px';
-                    labelSpan.style.verticalAlign = 'middle';
-
-                    nameEl.parentNode.insertBefore(labelSpan, nameEl.nextSibling);
-
-                    // 额外寻找卡片主体级别，施加背景色/边框高亮和折叠角标
-                    const cardBox = nameEl.closest('.geek-item') || nameEl.closest('.user-list-item') || wrap;
-                    if (cardBox) {
-                        cardBox.classList.add('bh-highlight-target');
-                        if (!cardBox.querySelector('.bh-target-indicator')) {
-                            const indicator = document.createElement('div');
-                            indicator.className = 'bh-target-indicator ' + labelClass;
-                            indicator.textContent = hit.label;
-                            cardBox.appendChild(indicator);
-                        }
-                    }
-
-                    count++;
-                }
-            }
-        });
-        if (count > 0) {
-            logger.info(`[ChatList] 成功为 ${count} 个历史牛人打上了学历高亮徽章！`);
-        }
+export function filterChatListByDOM() {
+    document.body.classList.add('bh-chat-mode');
+    document.body.classList.remove('bh-recommend-mode');
+    const cache = loadSchoolCache();
+    const cacheKeys = Object.keys(cache);
+    logger.info(`[聊天高亮] 开始扫描, 缓存条目数: ${cacheKeys.length}`);
+    if (cacheKeys.length > 0) {
+        logger.info(`[聊天高亮] 缓存 keys 示例: ${cacheKeys.slice(0, 6).join(', ')}`);
     }
 
-    highlightChatItems();
+    const cards = document.querySelectorAll('.geek-item-wrap');
+    logger.info(`[聊天高亮] 找到 ${cards.length} 张 .geek-item-wrap 卡片`);
+    let newTargetCount = 0;
+    let existingTargetCount = 0;
 
-    // 如果之前绑定过，就不要重复绑定了
-    if (chatListObserver) return;
-
-    // 监听 DOM 变化（聊天列表可能动态加载或滚动）
-    chatListObserver = new MutationObserver((mutations) => {
-        let shouldCheck = false;
-        for (const m of mutations) {
-            if (m.addedNodes.length > 0 || m.type === 'characterData') {
-                shouldCheck = true;
-                break;
-            }
+    cards.forEach((card, idx) => {
+        // 已经高亮过的跳过
+        if (card.querySelector('.bh-card-label')) {
+            existingTargetCount++;
+            return;
         }
-        if (shouldCheck) {
-            // 使用微小节流防止卡顿
-            if (chatListObserver._timer) clearTimeout(chatListObserver._timer);
-            chatListObserver._timer = setTimeout(highlightChatItems, 300);
+
+        // 从 data-id 提取 uid（格式为 "uid-jobSource"）
+        const geekItem = card.querySelector('.geek-item');
+        const dataId = geekItem ? geekItem.getAttribute('data-id') : '';
+        const uid = dataId ? dataId.split('-')[0] : '';
+
+        // 从 .geek-name 获取名字
+        const nameEl = card.querySelector('.geek-name');
+        const name = nameEl ? nameEl.textContent.trim() : '';
+
+        // 调试：前5张卡片输出详细信息
+        if (idx < 5) {
+            logger.info(`[聊天高亮] 卡片${idx}: uid=${uid}, name=${name}, dataId=${dataId}`);
+        }
+
+        // 优先用 uid 查缓存，其次用名字
+        let cached = uid ? cache[uid] : null;
+        if (!cached && name) {
+            cached = cache['name_' + name];
+        }
+
+        if (idx < 5) {
+            logger.info(`[聊天高亮] 卡片${idx}: 缓存命中=${!!cached}, schoolLabel=${cached ? cached.schoolLabel : 'N/A'}`);
+        }
+
+        if (cached && cached.schoolLabel) {
+            const config = getConfig();
+            // 检查该分类是否启用
+            if (!config.enabledSchoolLabels.includes(cached.schoolLabel)) {
+                logger.info(`[聊天高亮] 卡片${idx}: ${cached.schoolLabel} 未在 enabledSchoolLabels 中启用`);
+                return;
+            }
+
+            const labelClass = cached.schoolLabel === '985' ? 'n985' : cached.schoolLabel === '211' ? 'n211' : cached.schoolLabel;
+
+            // 添加高亮类
+            card.classList.add('boss-helper-target', `bh-target-${labelClass}`);
+            card.setAttribute('data-school-label', cached.schoolLabel);
+
+            // 注入标签到 .geek-name 旁
+            if (nameEl && nameEl.parentNode) {
+                const labelSpan = document.createElement('span');
+                labelSpan.className = `bh-card-label ${labelClass}`;
+                labelSpan.textContent = cached.schoolLabel;
+                nameEl.parentNode.insertBefore(labelSpan, nameEl.nextSibling);
+            }
+
+            logger.info(`[聊天高亮] ✅ 卡片${idx}: ${name} → ${cached.school} [${cached.schoolLabel}] 已高亮`);
+            newTargetCount++;
         }
     });
 
-    chatListObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const totalTargets = newTargetCount + existingTargetCount;
+    logger.info(`[聊天高亮] 扫描完成: ${cards.length} 张卡片，画面中共 ${totalTargets} 名目标院校 (新增高亮 ${newTargetCount} 名)`);
+    return totalTargets;
+}
 
-    // 终极兜底方案：每两秒主动巡逻一次，彻底击碎 SPA 框架的虚拟 DOM 延迟渲染造成的事件丢失问题
-    setInterval(() => {
-        if (location.pathname.includes('/chat') || location.pathname.includes('/friend')) {
-            highlightChatItems();
+/**
+ * 聊天窗右侧面板高亮
+ * 当 geek/info 接口返回目标院校时，在 conversation-main 中标注
+ */
+export function highlightConversationPanel(info) {
+    if (!info || !info.schoolMatch) return;
+
+    let retries = 0;
+
+    // 使用轮询等待 Vue 重新渲染右侧聊天面板完成
+    const tryInject = () => {
+        const panel = document.querySelector('.conversation-main');
+        if (!panel && retries < 15) {
+            retries++;
+            setTimeout(tryInject, 100);
+            return;
         }
-    }, 2000);
 
-    logger.info('[ChatList] 聊天列表离线高亮全局 DOM 监听器（双擎版）已挂载启动');
+        const headerNameSelectors = [
+            '.chat-conversation .title-area .title',
+            '.chat-conversation .name',
+            '.info-header .geek-name',
+            '.conversation-main .title',
+            '.conversation-header .name',
+            '.conversation-box [class*="name"]'
+        ];
+
+        let targetEl = null;
+        for (const sel of headerNameSelectors) {
+            const el = panel ? panel.querySelector(sel) : document.querySelector(sel);
+            // 确保找到的标题元素内容确实包含这个目标的名字，避免把旧人的名字高亮起到了新人的学校
+            if (el && el.textContent.includes(info.name)) {
+                targetEl = el;
+                break;
+            }
+        }
+
+        if (!targetEl) {
+            if (retries < 15) {
+                retries++;
+                setTimeout(tryInject, 100);
+            }
+            return;
+        }
+
+        // 移除全局或父级内旧的高亮标记（防止重复插入）
+        document.querySelectorAll('.bh-chat-school-label').forEach(el => el.remove());
+
+        const labelClass = info.schoolMatch.label === '985' ? 'n985' : info.schoolMatch.label === '211' ? 'n211' : info.schoolMatch.label;
+        const labelSpan = document.createElement('span');
+        labelSpan.className = `bh-card-label bh-chat-school-label ${labelClass}`;
+        labelSpan.textContent = `${info.schoolMatch.label} · ${info.school}`;
+        labelSpan.style.marginLeft = '8px';
+
+        targetEl.appendChild(labelSpan);
+        logger.info(`聊天窗高亮: ${info.name} → ${info.school} [${info.schoolMatch.label}]`);
+    };
+
+    tryInject();
+
+    // 同时刷新左侧列表（可能此用户之前没高亮）
+    filterChatListByDOM();
 }

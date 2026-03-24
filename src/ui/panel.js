@@ -3,7 +3,7 @@
  * 主界面框架、拖拽、交互绑定
  */
 
-import { getConfig, updateConfig, getDailyCount, getHourlyCount, getSchoolLabelCounts } from '../config.js';
+import { getConfig, updateConfig, getDailyCount, getSchoolLabelCounts, parseSchoolsText, serializeSchoolsText } from '../config.js';
 import { logger, setLogChangeCallback, getTodayKey } from '../utils.js';
 import { isCircuitBroken, resetCircuitBreaker } from '../anti-detect.js';
 import { getTargetCandidates, filterByDOM } from '../filter.js';
@@ -19,6 +19,9 @@ function buildPanelHTML(config) {
       <div class="bh-brand">
         <svg viewBox="0 0 24 24" fill="none" class="bh-logo" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         <span>BossHelper</span>
+        <div id="bh-run-status" class="bh-status ok">
+          <div class="bh-status-dot"></div> <span class="bh-status-text">就绪</span>
+        </div>
       </div>
       <div class="bh-header-btns">
         <button class="bh-btn-icon" id="bh-minimize" title="最小化面板">
@@ -28,12 +31,6 @@ function buildPanelHTML(config) {
     </div>
     
     <div class="bh-body" id="bh-body">
-      <!-- 运行状态 -->
-      <div class="bh-status-banner">
-         <div id="bh-run-status" class="bh-status ok">
-           <div class="bh-status-dot"></div> <span class="bh-status-text">系统就绪</span>
-         </div>
-      </div>
 
       <!-- 数据看板 -->
       <div class="bh-dashboard">
@@ -46,14 +43,13 @@ function buildPanelHTML(config) {
           <div class="bh-card-value" id="bh-greeted-count">${getDailyCount()}</div>
         </div>
         <div class="bh-card">
-          <div class="bh-card-title">本时段</div>
-          <div class="bh-card-value" id="bh-hourly-count">${getHourlyCount()}</div>
+          <div class="bh-card-title">运行上限</div>
+          <div class="bh-card-value" id="bh-daily-limit-display">${config.dailyLimit}</div>
         </div>
       </div>
 
-      <!-- 院校分布 -->
-      <div class="bh-dist-group" id="bh-dist-group">
-      </div>
+      <!-- 院校分布（动态渲染） -->
+      <div class="bh-dist-group" id="bh-dist-group"></div>
 
       <!-- 操作区 -->
       <div class="bh-action-group">
@@ -84,10 +80,6 @@ function buildPanelHTML(config) {
           <span>单日最大触达</span>
           <input type="number" class="bh-input-box" id="bh-daily-limit" value="${config.dailyLimit}">
         </div>
-        <div class="bh-control-row">
-          <span>每小时限额</span>
-          <input type="number" class="bh-input-box" id="bh-hourly-limit" value="${config.hourlyLimit}">
-        </div>
         
         <div class="bh-switch-group">
           <label class="bh-switch-label">
@@ -106,12 +98,11 @@ function buildPanelHTML(config) {
         </div>
 
         <div class="bh-filter-rules">
-          <div class="bh-rule-title">目标院校名单设置 (每行: 院校名称 标签)</div>
-          <textarea class="bh-textarea" id="bh-target-schools-text" rows="5" style="margin-bottom:12px; white-space: pre-wrap;" placeholder="例如: 清华大学 C9">${config.targetSchoolsText || ''}</textarea>
-          
-          <div class="bh-rule-title">启用的分级标签 (筛选时生效)</div>
-          <div class="bh-tags-selector" id="bh-tags-selector" style="flex-wrap: wrap;">
-            <!-- dynamically generated -->
+          <div class="bh-rule-title">目标院校规则集</div>
+          <div class="bh-tags-selector" id="bh-tags-selector"></div>
+          <div style="margin-top:10px;">
+            <textarea class="bh-textarea bh-school-textarea" id="bh-school-input" rows="6" placeholder="每行一所学校，格式：学校名 类别&#10;例如：清华大学 C9">${serializeSchoolsText(config.targetSchools)}</textarea>
+            <div class="bh-hint">每行一所学校，类别用空格或逗号分隔，无类别默认"其他"</div>
           </div>
         </div>
         <button class="bh-btn bh-outline bh-w-full" style="margin-top:12px" id="bh-save-settings">保存配置</button>
@@ -172,11 +163,10 @@ export function createPanel() {
 
   // 绑定事件
   bindEvents(panel, restoreBtn);
-  renderFilterTags(config);
   renderGreetingList();
+  renderLabelBadges();
   setupLogUpdater();
   setupStatusUpdater();
-
 
   // 启动周期性统计刷新
   setInterval(refreshStats, 5000);
@@ -303,52 +293,44 @@ function setupCollapse(toggleId, bodyId, arrowId) {
 
 // ====== 设置保存 ======
 
-function renderFilterTags(config) {
-  const container = document.getElementById('bh-tags-selector');
-  if (!container) return;
-  const allLabels = [...new Set((config.targetSchools || []).map(s => s.label))];
-  if (allLabels.length === 0) {
-    container.innerHTML = '<span style="font-size:12px;color:#94a3b8;">暂无可用的标签分类</span>';
-    return;
-  }
-  container.innerHTML = allLabels.map(label => {
-    const checked = (config.enabledSchoolLabels || []).includes(label) ? 'checked' : '';
-    return `<label class="bh-check-badge"><input type="checkbox" value="${label}" ${checked}><span>${label}</span></label>`;
-  }).join('');
-}
-
 function saveSettings() {
-  const text = document.getElementById('bh-target-schools-text').value;
-  const oldConfig = getConfig();
-  const oldLabels = [...new Set((oldConfig.targetSchools || []).map(s => s.label))];
+  // 解析 textarea 中的学校列表
+  const schoolInput = document.getElementById('bh-school-input');
+  const schoolText = schoolInput ? schoolInput.value : '';
+  const parsedSchools = parseSchoolsText(schoolText);
 
+  // 收集启用的标签
   const enabledLabels = [];
-  document.querySelectorAll('#bh-tags-selector input:checked').forEach(el => {
-    enabledLabels.push(el.value);
+  const existingLabelsInDom = new Set();
+  document.querySelectorAll('#bh-tags-selector .bh-check-badge input').forEach(cb => {
+    const label = cb.getAttribute('data-label');
+    existingLabelsInDom.add(label);
+    if (cb.checked) {
+      enabledLabels.push(label);
+    }
   });
 
-  // Temporarily apply to check if new labels are introduced
-  const tempConfig = updateConfig({ targetSchoolsText: text });
-  const newLabels = [...new Set((tempConfig.targetSchools || []).map(s => s.label))];
-
-  // Auto-enable newly added labels by default
-  for (const nl of newLabels) {
-    if (!oldLabels.includes(nl) && !enabledLabels.includes(nl)) {
-      enabledLabels.push(nl);
+  // 对于文本框中新解析出、且还未渲染在 DOM 中的标签，默认认为是全选开启的
+  const allParsedLabels = [...new Set(parsedSchools.map(s => s.label))];
+  for (const label of allParsedLabels) {
+    if (!existingLabelsInDom.has(label)) {
+      enabledLabels.push(label);
     }
   }
 
   updateConfig({
     greetInterval: parseInt(document.getElementById('bh-interval').value) || 10,
-    dailyLimit: parseInt(document.getElementById('bh-daily-limit').value) || 100,
-    hourlyLimit: parseInt(document.getElementById('bh-hourly-limit').value) || 50,
+    dailyLimit: parseInt(document.getElementById('bh-daily-limit').value) || 80,
     autoLoadMore: document.getElementById('bh-auto-load').checked,
     workHoursEnabled: document.getElementById('bh-work-hours').checked,
     behaviorSimEnabled: document.getElementById('bh-behavior-sim').checked,
+    targetSchools: parsedSchools,
     enabledSchoolLabels: enabledLabels,
   });
 
-  renderFilterTags(getConfig());
+  // 刷新标签选择器和统计
+  renderLabelBadges();
+  refreshStats();
   showNotification('设置已保存', 'success');
 }
 
@@ -416,15 +398,15 @@ function updateRunStatus() {
 
   if (isCircuitBroken()) {
     statusEl.className = 'bh-status error';
-    statusEl.innerHTML = '<span class="bh-status-dot"></span> 已熔断';
+    statusEl.innerHTML = '<div class="bh-status-dot"></div> <span class="bh-status-text">已熔断</span>';
     resetBtn.style.display = '';
   } else if (isGreetingRunning()) {
     statusEl.className = 'bh-status running';
-    statusEl.innerHTML = '<span class="bh-status-dot"></span> 运行中';
+    statusEl.innerHTML = '<div class="bh-status-dot"></div> <span class="bh-status-text">运行中</span>';
     resetBtn.style.display = 'none';
   } else {
     statusEl.className = 'bh-status ok';
-    statusEl.innerHTML = '<span class="bh-status-dot"></span> 就绪';
+    statusEl.innerHTML = '<div class="bh-status-dot"></div> <span class="bh-status-text">就绪</span>';
     resetBtn.style.display = 'none';
   }
 }
@@ -432,37 +414,55 @@ function updateRunStatus() {
 function refreshStats() {
   const targetEl = document.getElementById('bh-target-count');
   const greetedEl = document.getElementById('bh-greeted-count');
-  const hourlyEl = document.getElementById('bh-hourly-count');
+  const limitEl = document.getElementById('bh-daily-limit-display');
 
   const targets = getTargetCandidates();
   if (targetEl) targetEl.textContent = targets.length;
   if (greetedEl) greetedEl.textContent = getDailyCount();
-  if (hourlyEl) hourlyEl.textContent = getHourlyCount();
+  if (limitEl) limitEl.textContent = getConfig().dailyLimit;
 
-  // 分类统计
+  // 动态分类统计
   const labelCounts = getSchoolLabelCounts(targets);
   const distGroup = document.getElementById('bh-dist-group');
   if (distGroup) {
-    const allLabels = Object.keys(labelCounts).sort();
-    if (allLabels.length === 0) {
-      distGroup.innerHTML = '<div style="font-size:12px;color:#94a3b8;width:100%;text-align:center;">暂无匹配目标</div>';
-    } else {
-      // Wrap label items to fit dynamic counts
-      distGroup.style.flexWrap = 'wrap';
-      distGroup.innerHTML = allLabels.map(label => {
-        const count = labelCounts[label];
-        const safeLabel = label.replace(/[^A-Za-z0-9_]/g, '');
-        let cssClass = 'n211'; // generic style
-        if (label === 'C9') cssClass = 'c9';
-        else if (label === '985') cssClass = 'n985';
-        else if (label === '211') cssClass = 'n211';
-        else cssClass = 'ncustom';
-        return `<div class="bh-dist-item ${cssClass}" style="flex:0 1 auto; min-width: 60px;"><span class="bh-d-label">${label}</span><span class="bh-d-val">${count}</span></div>`;
-      }).join('');
-    }
+    const config = getConfig();
+    const allLabels = config.enabledSchoolLabels || [];
+    distGroup.innerHTML = allLabels.map(label => {
+      const cssClass = getLabelCssClass(label);
+      const count = labelCounts[label] || 0;
+      return `<div class="bh-dist-item ${cssClass}"><span class="bh-d-label">${label}</span><span class="bh-d-val">${count}</span></div>`;
+    }).join('');
   }
 
   updateRunStatus();
+}
+
+/**
+ * 获取标签对应的 CSS class
+ */
+function getLabelCssClass(label) {
+  const map = { 'C9': 'c9', '985': 'n985', '211': 'n211' };
+  return map[label] || 'custom';
+}
+
+/**
+ * 渲染标签选择器 badge
+ */
+function renderLabelBadges() {
+  const config = getConfig();
+  const container = document.getElementById('bh-tags-selector');
+  if (!container) return;
+
+  // 从 targetSchools 中提取所有唯一标签
+  const allLabels = [...new Set(config.targetSchools.map(s => s.label))];
+  const enabledLabels = config.enabledSchoolLabels || [];
+
+  container.innerHTML = allLabels.map(label => {
+    // 根据 config.enabledSchoolLabels 决定是否勾选
+    // 如果是用户刚在文本框输入的全新标签，在 saveSettings 时已自动加入了 enabledLabels 中
+    const checked = enabledLabels.includes(label) ? 'checked' : '';
+    return `<label class="bh-check-badge"><input type="checkbox" data-label="${label}" ${checked}><span>${label}</span></label>`;
+  }).join('');
 }
 
 function setupStatusUpdater() {

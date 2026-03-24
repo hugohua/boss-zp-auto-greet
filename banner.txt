@@ -4,8 +4,8 @@
 // @version      2.0.0
 // @description  BOSS直聘自动筛选候选人并智能打招呼，支持风控保护、招呼语模板、操作记录
 // @author       BossHelper
-// @match        https://*.zhipin.com/web/boss/*
-// @match        https://*.zhipin.com/web/chat/*
+// @match        https://*.zhipin.com/web/*/recommend/*
+// @match        https://*.zhipin.com/web/chat/index
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle

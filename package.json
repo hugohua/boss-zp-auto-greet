@@ -6,9 +6,13 @@
   "type": "module",
   "scripts": {
     "build": "rollup -c",
-    "dev": "rollup -c --watch"
+    "dev": "rollup -c --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "rollup": "^4.0.0"
+    "jsdom": "^29.0.1",
+    "rollup": "^4.0.0",
+    "vitest": "^4.1.1"
   }
 }

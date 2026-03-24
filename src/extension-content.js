@@ -1,4 +1,4 @@
-import { loadConfig, updateConfig, getDailyCount, getHourlyCount } from './config.js';
+import { loadConfig, updateConfig, getDailyCount } from './config.js';
 import { logger, setLogChangeCallback } from './utils.js';
 import {
     installApmInterceptor,
@@ -125,7 +125,6 @@ function syncRuntimeStats() {
             targetCount: targets.length,
             labelCounts: counts,
             dailyCount: getDailyCount(),
-            hourlyCount: getHourlyCount(),
         },
     }).catch(() => { });
 }

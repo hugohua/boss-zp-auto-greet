@@ -84,12 +84,11 @@ export function injectStyles() {
     .mb-1 { margin-bottom: 4px; }
     .mb-12 { margin-bottom: 12px; }
 
-    /* 状态条 */
-    .bh-status-banner {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
+    /* Header 内联状态指示器 */
+    .bh-brand .bh-status {
+      margin-left: 8px;
+      font-size: 11px;
+      padding: 2px 8px;
     }
     .bh-status {
       display: inline-flex;
@@ -170,9 +169,22 @@ export function injectStyles() {
     .bh-dist-item.c9 { background: #fef2f2; color: #b91c1c; }
     .bh-dist-item.n985 { background: #fffbeb; color: #b45309; }
     .bh-dist-item.n211 { background: #f0f9ff; color: #0369a1; }
-    .bh-dist-item.ncustom { background: #f5f3ff; color: #6d28d9; }
+    .bh-dist-item.custom { background: #f0fdf4; color: #166534; }
     .bh-d-label { opacity: 0.8; font-size: 11px; font-weight: 700; }
     .bh-d-val { font-size: 14px; }
+
+    /* 学校输入提示 */
+    .bh-hint {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .bh-school-textarea {
+      font-size: 12px;
+      line-height: 1.5;
+      min-height: 100px;
+    }
 
     /* 操作按钮 */
     .bh-action-group {
@@ -420,80 +432,33 @@ export function injectStyles() {
       z-index: 10;
     }
     
-    .boss-helper-target.bh-target-C9 {
+    .bh-recommend-mode .boss-helper-target.bh-target-C9 {
       border: 2px solid #ef4444 !important;
       box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15) !important;
       background: linear-gradient(135deg, #fef2f2 0%, #ffffff 40%) !important;
     }
-    .boss-helper-target.bh-target-n985 {
+    .bh-recommend-mode .boss-helper-target.bh-target-n985 {
       border: 2px solid #f59e0b !important;
       box-shadow: 0 4px 16px rgba(245, 158, 11, 0.15) !important;
       background: linear-gradient(135deg, #fffbeb 0%, #ffffff 40%) !important;
     }
-    .boss-helper-target.bh-target-n211 {
+    .bh-recommend-mode .boss-helper-target.bh-target-n211 {
       border: 2px solid #3b82f6 !important;
       box-shadow: 0 4px 16px rgba(59, 130, 246, 0.15) !important;
       background: linear-gradient(135deg, #eff6ff 0%, #ffffff 40%) !important;
     }
-    .boss-helper-target.bh-target-ncustom {
-      border: 2px solid #8b5cf6 !important;
-      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.15) !important;
-      background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 40%) !important;
-    }
-
-    /* 目标高亮边框/背景 */
-    .bh-highlight-target {
-        box-shadow: 0 0 0 2px rgba(0, 166, 167, 0.4) !important;
-        background: linear-gradient(to right, rgba(0, 166, 167, 0.05), transparent) !important;
-        position: relative !important;
-    }
-
-    /* 侧边悬浮折叠角标 */
-    .bh-target-indicator {
-        position: absolute;
-        top: 10px;
-        left: -8px;
-        color: white;
-        font-weight: bold;
-        padding: 4px 10px;
-        border-radius: 0 10px 10px 0;
-        z-index: 9;
-        font-size: 12px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
-        pointer-events: none;
-    }
-
-    .bh-target-indicator::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 100%;
-        border-bottom: 8px solid transparent;
-    }
-
-    /* 角标颜色分级 */
-    .bh-target-indicator.n985 { background-color: #00a6a7; }
-    .bh-target-indicator.n985::after { border-right: 8px solid #007a7a; }
-    
-    .bh-target-indicator.n211 { background-color: #1890ff; }
-    .bh-target-indicator.n211::after { border-right: 8px solid #096dd9; }
-    
-    .bh-target-indicator.nc9 { background-color: #ff4d4f; }
-    .bh-target-indicator.nc9::after { border-right: 8px solid #cf1322; }
-    
-    .bh-target-indicator.ncustom { background-color: #8b5cf6; }
-    .bh-target-indicator.ncustom::after { border-right: 8px solid #6d28d9; }
 
     /* 悬浮角标 */
     .boss-helper-target::before {
       content: attr(data-school-label);
       position: absolute;
-      top: -2px;
-      left: -2px;
+      top: 0;
+      left: 0;
       padding: 4px 12px;
       font-size: 12px;
       font-weight: 800;
       color: white;
+      background: linear-gradient(135deg, #10b981, #059669); /* 自定义标签的默认背景色 */
       border-bottom-right-radius: 10px;
       z-index: 20;
       letter-spacing: 1px;
@@ -502,7 +467,6 @@ export function injectStyles() {
     .boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
     .boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
     .boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-    .boss-helper-target.bh-target-ncustom::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
 
     /* 内部备用小标签 */
     .bh-card-label {
@@ -516,11 +480,11 @@ export function injectStyles() {
       vertical-align: middle;
       box-sizing: border-box;
       z-index: 2;
+      background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; /* 自定义标签默认样式 */
     }
-    .bh-card-label.C9 { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-    .bh-card-label.n985 { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
-    .bh-card-label.n211 { background: #f0f9ff; color: #0369a1; border: 1px solid #bfdbfe; }
-    .bh-card-label.ncustom { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+    .bh-card-label.C9 { background: #fef2f2 !important; color: #b91c1c !important; border-color: #fecaca !important; }
+    .bh-card-label.n985 { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
+    .bh-card-label.n211 { background: #f0f9ff !important; color: #0369a1 !important; border-color: #bfdbfe !important; }
 
     /* ====== 全局悬浮气泡通知 ====== */
     .bh-notification {
