@@ -152,12 +152,12 @@ export function injectStyles() {
 
     /* 标签分布统计 */
     .bh-dist-group {
-      display: flex;
-      gap: 6px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
       margin-bottom: 16px;
     }
     .bh-dist-item {
-      flex: 1;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -170,7 +170,15 @@ export function injectStyles() {
     .bh-dist-item.n985 { background: #fffbeb; color: #b45309; }
     .bh-dist-item.n211 { background: #f0f9ff; color: #0369a1; }
     .bh-dist-item.custom { background: #f0fdf4; color: #166534; }
-    .bh-d-label { opacity: 0.8; font-size: 11px; font-weight: 700; }
+    .bh-d-label { 
+      opacity: 0.8; 
+      font-size: 11px; 
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-right: 4px;
+    }
     .bh-d-val { font-size: 14px; }
 
     /* 学校输入提示 */

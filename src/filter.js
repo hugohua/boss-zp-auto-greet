@@ -132,7 +132,9 @@ export function installApiInterceptor() {
 function isRecommendApi(url) {
     return url.includes('/wapi/zpgeek/recommend/') ||
         url.includes('/wapi/zpboss/recommend/') ||
-        url.includes('/wapi/zpgeek/search/');
+        url.includes('/wapi/zpgeek/search/') ||
+        url.includes('/wapi/zpjob/rec/geek/') ||
+        url.includes('/wapi/zpjob/rec/f1/card');
 }
 
 function isChatGeekInfoApi(url) {

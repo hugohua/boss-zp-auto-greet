@@ -315,8 +315,12 @@ export function installApmInterceptor() {
     };
 
     XMLHttpRequest.prototype.send = function (body) {
-        // 只拦截 APM 埋点请求
-        if (this._bossUrl && this._bossUrl.includes('/wapi/zpApm/actionLog/') && this._bossMethod === 'POST') {
+        // 拦截 APM 埋点和行为日志请求
+        const isApmLog = this._bossUrl && this._bossMethod === 'POST' && (
+            this._bossUrl.includes('/wapi/zpApm/actionLog/') ||
+            this._bossUrl.includes('/wapi/zpCommon/actionLog/')
+        );
+        if (isApmLog) {
             try {
                 const cleaned = cleanApmData(body);
                 if (cleaned !== body) {
@@ -334,81 +338,106 @@ export function installApmInterceptor() {
 }
 
 /**
- * 清洗 APM 数据：移除自动化工具特征
+ * 清洗 APM 及行为日志数据：移除自动化工具特征
  */
 function cleanApmData(body) {
     if (!body || typeof body !== 'string') return body;
 
     try {
         const params = new URLSearchParams(body);
-        const content = params.get('content');
-        if (!content) return body;
-
-        const decoded = decodeURIComponent(content);
-        const data = JSON.parse(decoded);
-
-        if (!data.items || !Array.isArray(data.items)) return body;
-
-        let modified = false;
-
-        for (const item of data.items) {
-            // 清除自动化工具特征
-            if (item.p2 === 52001) {
-                item.p2 = 0;
-                modified = true;
-            }
-            // 修正负坐标
-            if (item.p4 && /-\d+/.test(item.p4)) {
-                const coords = item.p4.split(',').map(Number);
-                item.p4 = coords.map(c => Math.abs(c) || randomInt(30, 70)).join(',');
-                modified = true;
-            }
-            // 补充空轨迹数据
-            if (item.p6 && typeof item.p6 === 'object') {
-                if (!item.p6.x || item.p6.x === '') {
-                    item.p6.x = generateMouseTrack(200, 1300);
-                    modified = true;
+        
+        // 1. 处理 APM 格式 (content=...)
+        if (params.has('content')) {
+            const content = params.get('content');
+            const data = JSON.parse(decodeURIComponent(content));
+            if (data.items && Array.isArray(data.items)) {
+                let modified = false;
+                for (const item of data.items) {
+                    if (cleanSingleAction(item)) modified = true;
                 }
-                if (!item.p6.y || item.p6.y === '') {
-                    item.p6.y = generateMouseTrack(200, 300);
-                    modified = true;
+                if (modified) {
+                    const newContent = encodeURIComponent(JSON.stringify(data));
+                    params.set('content', newContent);
+                    return params.toString();
                 }
-                if (!item.p6.d || item.p6.d === '') {
-                    item.p6.d = generateSmallValues(200);
-                    modified = true;
-                }
-                if (!item.p6.e || item.p6.e === '') {
-                    item.p6.e = generateSmallValues(200);
-                    modified = true;
-                }
-            }
-
-            // 补充针对 click() 触发的坐标暴露 (p3=10004 时 p5 和 p6 为 x, y 坐标，若为0则伪造)
-            if (item.p3 === 10004) {
-                if (item.p5 === 0) {
-                    item.p5 = randomInt(20, 80); // 按钮内部随机 X
-                    modified = true;
-                }
-                if (item.p6 === 0) {
-                    item.p6 = randomInt(10, 30); // 按钮内部随机 Y
-                    modified = true;
-                }
-            }
-
-            // 移除脚本按钮路径，防止点击我们的浮层内容时向官方暴露节点
-            if (item.p8 && (item.p8.includes('#boss-helper') || item.p8.includes('#bh-') || item.p8.includes('.bh-'))) {
-                item.p8 = '';
-                modified = true;
             }
         }
-
-        if (!modified) return body;
-
-        const newContent = encodeURIComponent(JSON.stringify(data));
-        return `content=${newContent}`;
+        
+        // 2. 处理业务行为日志格式 (ba=...)
+        if (params.has('ba')) {
+            const baContent = params.get('ba');
+            const data = JSON.parse(decodeURIComponent(baContent));
+            if (cleanSingleAction(data)) {
+                const newBa = encodeURIComponent(JSON.stringify(data));
+                params.set('ba', newBa);
+                return params.toString();
+            }
+        }
+        
+        return body;
     } catch (e) {
         return body;
     }
+}
+
+/**
+ * 清洗单个动作对象
+ * @returns {boolean} 是否发生了修改
+ */
+function cleanSingleAction(item) {
+    if (!item) return false;
+    let modified = false;
+
+    // 清除自动化工具特征
+    if (item.p2 === 52001) {
+        item.p2 = 0;
+        modified = true;
+    }
+    // 修正负坐标 (仅对 p4 为坐标的场景，注意部分 ba= 请求中 p4 是时间戳)
+    if (typeof item.p4 === 'string' && /-\d+/.test(item.p4) && item.p4.includes(',')) {
+        const coords = item.p4.split(',').map(Number);
+        item.p4 = coords.map(c => Math.abs(c) || randomInt(30, 70)).join(',');
+        modified = true;
+    }
+    // 补充空轨迹数据
+    if (item.p6 && typeof item.p6 === 'object') {
+        if (!item.p6.x || item.p6.x === '') {
+            item.p6.x = generateMouseTrack(200, 1300);
+            modified = true;
+        }
+        if (!item.p6.y || item.p6.y === '') {
+            item.p6.y = generateMouseTrack(200, 300);
+            modified = true;
+        }
+        if (!item.p6.d || item.p6.d === '') {
+            item.p6.d = generateSmallValues(200);
+            modified = true;
+        }
+        if (!item.p6.e || item.p6.e === '') {
+            item.p6.e = generateSmallValues(200);
+            modified = true;
+        }
+    }
+
+    // 补充针对 click() 触发的坐标暴露
+    if (item.p3 === 10004) {
+        if (item.p5 === 0) {
+            item.p5 = randomInt(20, 80); // 按钮内部随机 X
+            modified = true;
+        }
+        if (item.p6 === 0) {
+            item.p6 = randomInt(10, 30); // 按钮内部随机 Y
+            modified = true;
+        }
+    }
+
+    // 移除脚本按钮路径
+    if (item.p8 && typeof item.p8 === 'string' && (item.p8.includes('#boss-helper') || item.p8.includes('#bh-') || item.p8.includes('.bh-'))) {
+        item.p8 = '';
+        modified = true;
+    }
+
+    return modified;
 }
 
 // ====== 轨迹生成辅助 ======

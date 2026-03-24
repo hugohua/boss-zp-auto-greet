@@ -6,3 +6,4 @@ dist/
 srcipts/
 dockers/*
 temp
+.ai_memory
