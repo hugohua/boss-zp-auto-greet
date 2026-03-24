@@ -217,7 +217,7 @@ function parseTargetSchools(config) {
 export function matchSchool(schoolText, config) {
     if (!schoolText) return null;
     config = config || getConfig();
-    const enabledLabels = config.enabledSchoolLabels || [];
+    const enabledLabels = config.enabledSchoolLabels || ['C9', '985', '211'];
     for (const s of (config.targetSchools || [])) {
         if (enabledLabels.includes(s.label) && schoolText.includes(s.name)) {
             return s;

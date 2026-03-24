@@ -28,38 +28,36 @@ export function installApiInterceptor() {
     if (apiInterceptInstalled) return;
     apiInterceptInstalled = true;
 
-    // 保存当前的 XHR 原型方法（可能已被 APM 拦截器包装）
-    const origXhrOpen = window.XMLHttpRequest.prototype.open;
-    const origXhrSend = window.XMLHttpRequest.prototype.send;
+    // 注意：anti-detect.js 也会覆写 open/send，需要确保初始化顺序
+    // 这里监听的是 response 而非 request，不会冲突
 
-    window.XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
         this._filterUrl = url;
         return origXhrOpen.call(this, method, url, ...rest);
     };
 
-    window.XMLHttpRequest.prototype.send = function (body) {
-        const url = this._filterUrl || '';
-        const isRecommend = url.includes('/wapi/zpgeek/recommend/') ||
-            url.includes('/wapi/zpboss/recommend/') ||
-            url.includes('/wapi/zpgeek/search/') ||
-            url.includes('/wapi/zpjob/rec/geek/list');
-
-        if (isRecommend) {
+    // 拦截 load 事件来读取响应
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (body) {
+        if (this._filterUrl && isRecommendApi(this._filterUrl)) {
             this.addEventListener('load', function () {
                 try {
                     const data = JSON.parse(this.responseText);
                     if (data.code === 0 && data.zpData) {
-                        parseApiCandidates(data.zpData.geekList || data.zpData.resultList || data.zpData.list || []);
+                        const list = data.zpData.geekList || data.zpData.resultList || data.zpData.list || [];
+                        parseApiCandidates(list);
                     }
                 } catch (e) {
-                    // 解析失败忽略
+                    // 响应解析失败，忽略
                 }
             });
         }
-        return origXhrSend.call(this, body);
+        return origSend.call(this, body);
     };
 
-    logger.info('候选人原生 API 拦截器已无感挂载');
+    logger.info('候选人 API 拦截器已安装');
 }
 
 function isRecommendApi(url) {
@@ -115,33 +113,41 @@ function parseApiCandidates(list) {
 export function filterByDOM() {
     const config = getConfig();
 
-    // 使用原生的多重逗号选择器可以一次性吃下一堆 DOM，包含旧版和新版的所有变种容器
+    // 使用 queryAllFallback 策略（与老版本一致）：逐个选择器尝试，第一个命中即返回
     const cardSelectors = [
-        '.card-list > li',
-        '.card-list li',
+        '.recommend-card-wrap',
         '.card-item',
         '.candidate-card',
-        '.job-card-wrapper',
-        '.recommend-card-wrap',
-        '.recommend-card-wrapper',
-        '.card-list-wrap > li',
+        '.card-list > li',
         '[class*="geek-card"]',
-        '.geek-item',
-        '.user-list-item'
-    ].join(', ');
+    ];
 
-    const cards = Array.from(document.querySelectorAll(cardSelectors));
+    let cards = [];
+    for (const sel of cardSelectors) {
+        try {
+            const els = document.querySelectorAll(sel);
+            if (els.length > 0) {
+                cards = Array.from(els);
+                logger.info(`[DOM诊断] 选择器 "${sel}" 命中 ${cards.length} 张卡片`);
+                break;
+            }
+        } catch (e) { /* 忽略 */ }
+    }
+
+    // 诊断日志
+    logger.info(`[DOM诊断] querySelectorAll 命中 ${cards.length} 张卡片`);
+
     let targetCount = 0;
 
-    cards.forEach(card => {
+    cards.forEach((card, idx) => {
         let schoolText = '';
+        let matchStrategy = '';
 
-        // ====== 策略1：精准提取教育经历中的学校名 ======
-        // 真实 DOM 结构: .edu-exps > .timeline-item > .join-text-wrap.content > span:first-child
+        // ====== 策略1：精确定位 edu-exps 中的学校名 span ======
         const eduContentSpans = card.querySelectorAll('.edu-exps .join-text-wrap.content > span:first-child');
         if (eduContentSpans.length > 0) {
-            // 取第一条教育经历的学校名（通常是最高学历）
             schoolText = eduContentSpans[0].textContent.trim();
+            matchStrategy = '策略1-edu-span';
         }
 
         // ====== 策略2：通过专属 class 查找 ======
@@ -155,6 +161,7 @@ export function filterByDOM() {
                 const el = card.querySelector(sel);
                 if (el) {
                     schoolText = el.textContent.trim();
+                    matchStrategy = '策略2-' + sel;
                     break;
                 }
             }
@@ -166,9 +173,17 @@ export function filterByDOM() {
             for (const s of config.targetSchools) {
                 if (fullText.includes(s.name)) {
                     schoolText = s.name;
+                    matchStrategy = '策略3-fullText';
                     break;
                 }
             }
+        }
+
+        // 前 3 张卡片打出详细诊断
+        if (idx < 3) {
+            const nameEl = card.querySelector('[class*="name"]:not([class*="company"])');
+            const nameText = nameEl ? nameEl.textContent.trim() : '?';
+            logger.info(`[DOM诊断] 卡片${idx}: ${nameText} | school="${schoolText}" | via=${matchStrategy || '未匹配'}`);
         }
 
         const schoolMatch = matchSchool(schoolText, config);
