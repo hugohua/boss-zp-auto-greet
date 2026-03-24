@@ -87,7 +87,7 @@ function buildPanelHTML(config) {
             <span class="bh-switch-ui"></span><span class="bh-switch-text">列表自动翻页提取</span>
           </label>
         </div>
-        <div class="bh-switch-group mb-12" style="display:flex; flex-direction:column; gap:8px;">
+        <div class="bh-switch-group mb-12" style="display:flex; flex-direction:column;">
           <label class="bh-switch-label">
             <input type="checkbox" id="bh-behavior-sim" ${config.behaviorSimEnabled ? 'checked' : ''} class="bh-switch-input">
             <span class="bh-switch-ui"></span><span class="bh-switch-text">拟人化风控模拟</span>
