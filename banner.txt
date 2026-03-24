@@ -1,0 +1,14 @@
+// ==UserScript==
+// @name         BOSS直聘智能招呼助手
+// @namespace    http://tampermonkey.net/
+// @version      2.0.0
+// @description  BOSS直聘自动筛选候选人并智能打招呼，支持风控保护、招呼语模板、操作记录
+// @author       BossHelper
+// @match        https://*.zhipin.com/web/boss/*
+// @match        https://*.zhipin.com/web/chat/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @run-at       document-end
+// ==/UserScript==

@@ -110,10 +110,10 @@ async function syncConfigFromBg() {
 
 function syncRuntimeStats() {
     const targets = getTargetCandidates();
-    const counts = { C9: 0, '985': 0, '211': 0 };
+    const counts = {};
     targets.forEach((target) => {
-        if (counts[target.schoolLabel] !== undefined) {
-            counts[target.schoolLabel] += 1;
+        if (target.schoolLabel) {
+            counts[target.schoolLabel] = (counts[target.schoolLabel] || 0) + 1;
         }
     });
 
@@ -123,9 +123,7 @@ function syncRuntimeStats() {
             running: isGreetingRunning(),
             circuitBroken: isCircuitBroken(),
             targetCount: targets.length,
-            c9: counts.C9,
-            '985': counts['985'],
-            '211': counts['211'],
+            labelCounts: counts,
             dailyCount: getDailyCount(),
             hourlyCount: getHourlyCount(),
         },

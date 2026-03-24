@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boss Userscript Test First"
+  short_description: "Test-first workflow for safe changes to this BOSS userscript."
+  default_prompt: "Use $boss-userscript-test-first to change this BOSS userscript safely: write or update tests first, implement the change, then run build and targeted regression checks."

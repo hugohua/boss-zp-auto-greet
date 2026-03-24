@@ -87,12 +87,17 @@ async function greetingLoop() {
             if (config.autoLoadMore) {
                 logger.info('尝试加载更多候选人...');
                 scrollToLoadMore();
-                await sleep(3000);
+                await sleep(3500);
+
+                // 主动触发一次基于 DOM 的扫描提取，作为新数据拦截兜底
+                filterByDOM();
+
                 const newTargets = getUngreetedTargets();
                 if (newTargets.length === 0) {
-                    logger.info('无更多目标候选人，停止');
+                    logger.info('无更多目标候选人，停止当前循环');
                     break;
                 }
+                logger.info(`向下翻页成功，提取到新的待致意卡片`);
                 continue;
             }
             break;
@@ -304,7 +309,13 @@ function renderGreeting(target, config) {
  * 滚动加载更多
  */
 function scrollToLoadMore() {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    const allCards = document.querySelectorAll('[class*="card-item"], [class*="recommend-card"], .card-list > li');
+    if (allCards.length > 0) {
+        const lastCard = allCards[allCards.length - 1];
+        lastCard.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
 
     setTimeout(() => {
         const loadMoreSelectors = [

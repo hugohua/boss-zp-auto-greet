@@ -20,7 +20,12 @@ export function showRecordsModal() {
   const overlay = document.createElement('div');
   overlay.className = 'bh-modal-overlay';
 
-  const labelStyle = (l) => l === 'C9' ? 'background:#fef3f2;color:#dc2626' : l === '985' ? 'background:#fef9ee;color:#d97706' : 'background:#f0f9ff;color:#2563eb';
+  const labelStyle = (l) => {
+    if (l === 'C9') return 'background:#fef3f2;color:#dc2626';
+    if (l === '985') return 'background:#fef9ee;color:#d97706';
+    if (l === '211') return 'background:#f0f9ff;color:#0369a1';
+    return 'background:#f5f3ff;color:#6d28d9';
+  };
   const rows = records.slice().reverse().map(r => `
     <tr>
       <td>${r.name || '-'}</td>

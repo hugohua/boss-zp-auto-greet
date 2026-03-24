@@ -52,10 +52,7 @@ function buildPanelHTML(config) {
       </div>
 
       <!-- 院校分布 -->
-      <div class="bh-dist-group">
-        <div class="bh-dist-item c9"><span class="bh-d-label">C9</span><span class="bh-d-val" id="bh-c9-count">0</span></div>
-        <div class="bh-dist-item n985"><span class="bh-d-label">985</span><span class="bh-d-val" id="bh-985-count">0</span></div>
-        <div class="bh-dist-item n211"><span class="bh-d-label">211</span><span class="bh-d-val" id="bh-211-count">0</span></div>
+      <div class="bh-dist-group" id="bh-dist-group">
       </div>
 
       <!-- 操作区 -->
@@ -109,11 +106,12 @@ function buildPanelHTML(config) {
         </div>
 
         <div class="bh-filter-rules">
-          <div class="bh-rule-title">目标院校规则集</div>
-          <div class="bh-tags-selector">
-            <label class="bh-check-badge"><input type="checkbox" id="bh-label-c9" ${config.enabledSchoolLabels.includes('C9') ? 'checked' : ''}><span>C9</span></label>
-            <label class="bh-check-badge"><input type="checkbox" id="bh-label-985" ${config.enabledSchoolLabels.includes('985') ? 'checked' : ''}><span>985</span></label>
-            <label class="bh-check-badge"><input type="checkbox" id="bh-label-211" ${config.enabledSchoolLabels.includes('211') ? 'checked' : ''}><span>211</span></label>
+          <div class="bh-rule-title">目标院校名单设置 (每行: 院校名称 标签)</div>
+          <textarea class="bh-textarea" id="bh-target-schools-text" rows="5" style="margin-bottom:12px; white-space: pre-wrap;" placeholder="例如: 清华大学 C9">${config.targetSchoolsText || ''}</textarea>
+          
+          <div class="bh-rule-title">启用的分级标签 (筛选时生效)</div>
+          <div class="bh-tags-selector" id="bh-tags-selector" style="flex-wrap: wrap;">
+            <!-- dynamically generated -->
           </div>
         </div>
         <button class="bh-btn bh-outline bh-w-full" style="margin-top:12px" id="bh-save-settings">保存配置</button>
@@ -143,8 +141,11 @@ function buildPanelHTML(config) {
       </div>
 
       <!-- 监控终端 -->
-      <div class="bh-terminal-title">系统日志终端</div>
-      <div class="bh-terminal" id="bh-log"></div>
+      <div class="bh-terminal-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">系统日志终端</span>
+        <button class="bh-btn-sm-ghost" id="bh-copy-log" style="color:#64748b;padding:0;font-size:11px;opacity:0.8;">复制日志</button>
+      </div>
+      <div class="bh-terminal" id="bh-log" style="margin-top:0;"></div>
     </div>
   `;
 }
@@ -171,9 +172,11 @@ export function createPanel() {
 
   // 绑定事件
   bindEvents(panel, restoreBtn);
+  renderFilterTags(config);
   renderGreetingList();
   setupLogUpdater();
   setupStatusUpdater();
+
 
   // 启动周期性统计刷新
   setInterval(refreshStats, 5000);
@@ -238,6 +241,24 @@ function bindEvents(panel, restoreBtn) {
     updateRunStatus();
     showNotification('熔断已重置', 'success');
   });
+
+  // 复制日志
+  const copyLogBtn = document.getElementById('bh-copy-log');
+  if (copyLogBtn) {
+    copyLogBtn.addEventListener('click', () => {
+      const logEl = document.getElementById('bh-log');
+      if (logEl) {
+        const text = Array.from(logEl.querySelectorAll('.bh-log-entry')).map(el => {
+          return `[${el.querySelector('.time').textContent}] ${el.querySelector('.msg').textContent}`;
+        }).join('\n');
+        if (text) {
+          navigator.clipboard.writeText(text).then(() => showNotification('系统日志已复制到剪贴板', 'success'));
+        } else {
+          showNotification('极简日志大盘为空', 'info');
+        }
+      }
+    });
+  }
 }
 
 // ====== 拖拽 ======
@@ -282,21 +303,52 @@ function setupCollapse(toggleId, bodyId, arrowId) {
 
 // ====== 设置保存 ======
 
+function renderFilterTags(config) {
+  const container = document.getElementById('bh-tags-selector');
+  if (!container) return;
+  const allLabels = [...new Set((config.targetSchools || []).map(s => s.label))];
+  if (allLabels.length === 0) {
+    container.innerHTML = '<span style="font-size:12px;color:#94a3b8;">暂无可用的标签分类</span>';
+    return;
+  }
+  container.innerHTML = allLabels.map(label => {
+    const checked = (config.enabledSchoolLabels || []).includes(label) ? 'checked' : '';
+    return `<label class="bh-check-badge"><input type="checkbox" value="${label}" ${checked}><span>${label}</span></label>`;
+  }).join('');
+}
+
 function saveSettings() {
+  const text = document.getElementById('bh-target-schools-text').value;
+  const oldConfig = getConfig();
+  const oldLabels = [...new Set((oldConfig.targetSchools || []).map(s => s.label))];
+
   const enabledLabels = [];
-  if (document.getElementById('bh-label-c9').checked) enabledLabels.push('C9');
-  if (document.getElementById('bh-label-985').checked) enabledLabels.push('985');
-  if (document.getElementById('bh-label-211').checked) enabledLabels.push('211');
+  document.querySelectorAll('#bh-tags-selector input:checked').forEach(el => {
+    enabledLabels.push(el.value);
+  });
+
+  // Temporarily apply to check if new labels are introduced
+  const tempConfig = updateConfig({ targetSchoolsText: text });
+  const newLabels = [...new Set((tempConfig.targetSchools || []).map(s => s.label))];
+
+  // Auto-enable newly added labels by default
+  for (const nl of newLabels) {
+    if (!oldLabels.includes(nl) && !enabledLabels.includes(nl)) {
+      enabledLabels.push(nl);
+    }
+  }
 
   updateConfig({
     greetInterval: parseInt(document.getElementById('bh-interval').value) || 10,
-    dailyLimit: parseInt(document.getElementById('bh-daily-limit').value) || 80,
-    hourlyLimit: parseInt(document.getElementById('bh-hourly-limit').value) || 15,
+    dailyLimit: parseInt(document.getElementById('bh-daily-limit').value) || 100,
+    hourlyLimit: parseInt(document.getElementById('bh-hourly-limit').value) || 50,
     autoLoadMore: document.getElementById('bh-auto-load').checked,
     workHoursEnabled: document.getElementById('bh-work-hours').checked,
     behaviorSimEnabled: document.getElementById('bh-behavior-sim').checked,
     enabledSchoolLabels: enabledLabels,
   });
+
+  renderFilterTags(getConfig());
   showNotification('设置已保存', 'success');
 }
 
@@ -310,11 +362,12 @@ function renderGreetingList() {
   container.innerHTML = config.greetingTemplates.map((tmpl, i) => `
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <span style="flex:1;font-size:12px;color:#666;background:#f8f9ff;padding:6px 10px;border-radius:8px;
-                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tmpl}">
+                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background 0.2s;" 
+            title="点击复制: ${tmpl}" data-copy-greeting="${i}">
         ${tmpl}
       </span>
-      <button class="bh-btn bh-btn-sm" style="background:#ff4d4f;color:white;flex-shrink:0;margin:0;"
-              data-delete-greeting="${i}">✕</button>
+      <button class="bh-btn-sm-ghost" style="color:#f87171;flex-shrink:0;font-size:14px;padding:2px 6px;"
+              title="删除" data-delete-greeting="${i}">✕</button>
     </div>
   `).join('');
 
@@ -327,6 +380,17 @@ function renderGreetingList() {
       updateConfig({ greetingTemplates: templates });
       renderGreetingList();
       showNotification('已删除招呼语', 'info');
+    });
+  });
+
+  // 复制事件
+  container.querySelectorAll('[data-copy-greeting]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.getAttribute('data-copy-greeting'));
+      const text = config.greetingTemplates[idx];
+      navigator.clipboard.writeText(text).then(() => {
+        showNotification('已成功复制该话术到剪贴板', 'success');
+      });
     });
   });
 }
@@ -377,12 +441,26 @@ function refreshStats() {
 
   // 分类统计
   const labelCounts = getSchoolLabelCounts(targets);
-  const c9El = document.getElementById('bh-c9-count');
-  const n985El = document.getElementById('bh-985-count');
-  const n211El = document.getElementById('bh-211-count');
-  if (c9El) c9El.textContent = labelCounts.C9;
-  if (n985El) n985El.textContent = labelCounts['985'];
-  if (n211El) n211El.textContent = labelCounts['211'];
+  const distGroup = document.getElementById('bh-dist-group');
+  if (distGroup) {
+    const allLabels = Object.keys(labelCounts).sort();
+    if (allLabels.length === 0) {
+      distGroup.innerHTML = '<div style="font-size:12px;color:#94a3b8;width:100%;text-align:center;">暂无匹配目标</div>';
+    } else {
+      // Wrap label items to fit dynamic counts
+      distGroup.style.flexWrap = 'wrap';
+      distGroup.innerHTML = allLabels.map(label => {
+        const count = labelCounts[label];
+        const safeLabel = label.replace(/[^A-Za-z0-9_]/g, '');
+        let cssClass = 'n211'; // generic style
+        if (label === 'C9') cssClass = 'c9';
+        else if (label === '985') cssClass = 'n985';
+        else if (label === '211') cssClass = 'n211';
+        else cssClass = 'ncustom';
+        return `<div class="bh-dist-item ${cssClass}" style="flex:0 1 auto; min-width: 60px;"><span class="bh-d-label">${label}</span><span class="bh-d-val">${count}</span></div>`;
+      }).join('');
+    }
+  }
 
   updateRunStatus();
 }

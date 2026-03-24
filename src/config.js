@@ -9,9 +9,9 @@ const DEFAULTS = {
     // 打招呼间隔（秒）
     greetInterval: 10,
     // 单日打招呼上限
-    dailyLimit: 80,
+    dailyLimit: 100,
     // 单小时上限
-    hourlyLimit: 15,
+    hourlyLimit: 50,
     // 连续操作上限（到达后触发休息）
     consecutiveLimit: 15,
     // 休息时长范围（秒）
@@ -35,74 +35,69 @@ const DEFAULTS = {
         '您好，我们有一个不错的岗位机会，和您的经历非常匹配，欢迎了解！',
         '你好！对你的背景很感兴趣，我们这里有合适的发展机会，方便时可以聊聊~',
     ],
-    // 目标院校名单 { name: 学校名, label: 分类 }
-    targetSchools: [
-        // C9 联盟（9所）
-        { name: '清华大学', label: 'C9' },
-        { name: '北京大学', label: 'C9' },
-        { name: '浙江大学', label: 'C9' },
-        { name: '上海交通大学', label: 'C9' },
-        { name: '复旦大学', label: 'C9' },
-        { name: '南京大学', label: 'C9' },
-        { name: '中国科学技术大学', label: 'C9' },
-        { name: '哈尔滨工业大学', label: 'C9' },
-        { name: '西安交通大学', label: 'C9' },
-        // 985（非C9部分）
-        { name: '华中科技大学', label: '985' },
-        { name: '武汉大学', label: '985' },
-        { name: '中山大学', label: '985' },
-        { name: '四川大学', label: '985' },
-        { name: '北京航空航天大学', label: '985' },
-        { name: '同济大学', label: '985' },
-        { name: '东南大学', label: '985' },
-        { name: '中国人民大学', label: '985' },
-        { name: '北京理工大学', label: '985' },
-        { name: '南开大学', label: '985' },
-        { name: '天津大学', label: '985' },
-        { name: '山东大学', label: '985' },
-        { name: '中南大学', label: '985' },
-        { name: '吉林大学', label: '985' },
-        { name: '厦门大学', label: '985' },
-        { name: '大连理工大学', label: '985' },
-        { name: '北京师范大学', label: '985' },
-        { name: '华南理工大学', label: '985' },
-        { name: '电子科技大学', label: '985' },
-        { name: '重庆大学', label: '985' },
-        { name: '湖南大学', label: '985' },
-        { name: '西北工业大学', label: '985' },
-        { name: '兰州大学', label: '985' },
-        { name: '中国农业大学', label: '985' },
-        { name: '中国海洋大学', label: '985' },
-        { name: '中央民族大学', label: '985' },
-        { name: '东北大学', label: '985' },
-        { name: '华东师范大学', label: '985' },
-        { name: '国防科技大学', label: '985' },
-        { name: '西北农林科技大学', label: '985' },
-        // 211（非985部分，精选）
-        { name: '上海财经大学', label: '211' },
-        { name: '中央财经大学', label: '211' },
-        { name: '对外经济贸易大学', label: '211' },
-        { name: '北京邮电大学', label: '211' },
-        { name: '华东理工大学', label: '211' },
-        { name: '南京航空航天大学', label: '211' },
-        { name: '南京理工大学', label: '211' },
-        { name: '西安电子科技大学', label: '211' },
-        { name: '哈尔滨工程大学', label: '211' },
-        { name: '武汉理工大学', label: '211' },
-        { name: '西南财经大学', label: '211' },
-        { name: '中南财经政法大学', label: '211' },
-        { name: '北京交通大学', label: '211' },
-        { name: '北京科技大学', label: '211' },
-        { name: '北京外国语大学', label: '211' },
-        { name: '上海外国语大学', label: '211' },
-        { name: '中国政法大学', label: '211' },
-        { name: '华中师范大学', label: '211' },
-        { name: '苏州大学', label: '211' },
-        { name: '南京师范大学', label: '211' },
-        { name: '暨南大学', label: '211' },
-        { name: '郑州大学', label: '211' },
-        { name: '云南大学', label: '211' },
-    ],
+    // 默认目标院校与标签配置
+    targetSchoolsText: `清华大学 C9
+北京大学 C9
+浙江大学 C9
+上海交通大学 C9
+复旦大学 C9
+南京大学 C9
+中国科学技术大学 C9
+哈尔滨工业大学 C9
+西安交通大学 C9
+华中科技大学 985
+武汉大学 985
+中山大学 985
+四川大学 985
+北京航空航天大学 985
+同济大学 985
+东南大学 985
+中国人民大学 985
+北京理工大学 985
+南开大学 985
+天津大学 985
+山东大学 985
+中南大学 985
+吉林大学 985
+厦门大学 985
+大连理工大学 985
+北京师范大学 985
+华南理工大学 985
+电子科技大学 985
+重庆大学 985
+湖南大学 985
+西北工业大学 985
+兰州大学 985
+中国农业大学 985
+中国海洋大学 985
+中央民族大学 985
+东北大学 985
+华东师范大学 985
+国防科技大学 985
+西北农林科技大学 985
+上海财经大学 211
+中央财经大学 211
+对外经济贸易大学 211
+北京邮电大学 211
+华东理工大学 211
+南京航空航天大学 211
+南京理工大学 211
+西安电子科技大学 211
+哈尔滨工程大学 211
+武汉理工大学 211
+西南财经大学 211
+中南财经政法大学 211
+北京交通大学 211
+北京科技大学 211
+北京外国语大学 211
+上海外国语大学 211
+中国政法大学 211
+华中师范大学 211
+苏州大学 211
+南京师范大学 211
+暨南大学 211
+郑州大学 211
+云南大学 211`,
     // 启用的院校分类（可选择性开关）
     enabledSchoolLabels: ['C9', '985', '211'],
 };
@@ -163,6 +158,7 @@ function gmSet(key, value) {
 export function loadConfig() {
     const saved = gmGet(STORAGE_KEY, {});
     currentConfig = { ...DEFAULTS, ...saved };
+    parseTargetSchools(currentConfig);
     return currentConfig;
 }
 
@@ -179,6 +175,9 @@ export function getConfig() {
  */
 export function updateConfig(partial) {
     currentConfig = { ...getConfig(), ...partial };
+    if (partial.targetSchoolsText !== undefined) {
+        parseTargetSchools(currentConfig);
+    }
     gmSet(STORAGE_KEY, currentConfig);
     return currentConfig;
 }
@@ -188,11 +187,28 @@ export function updateConfig(partial) {
  */
 export function resetConfig() {
     currentConfig = { ...DEFAULTS };
+    parseTargetSchools(currentConfig);
     gmSet(STORAGE_KEY, currentConfig);
     return currentConfig;
 }
 
 // ====== 院校匹配 ======
+
+/**
+ * 解析 targetSchoolsText 并生成 targetSchools 数组
+ */
+function parseTargetSchools(config) {
+    const text = config.targetSchoolsText || '';
+    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+    const schools = [];
+    for (const line of lines) {
+        const parts = line.split(/[ ,，\t]+/);
+        if (parts.length >= 2) {
+            schools.push({ name: parts[0], label: parts[1] });
+        }
+    }
+    config.targetSchools = schools;
+}
 
 /**
  * 匹配学校名称，返回匹配到的院校对象 { name, label } 或 null
@@ -201,8 +217,8 @@ export function resetConfig() {
 export function matchSchool(schoolText, config) {
     if (!schoolText) return null;
     config = config || getConfig();
-    const enabledLabels = config.enabledSchoolLabels || ['C9', '985', '211'];
-    for (const s of config.targetSchools) {
+    const enabledLabels = config.enabledSchoolLabels || [];
+    for (const s of (config.targetSchools || [])) {
         if (enabledLabels.includes(s.label) && schoolText.includes(s.name)) {
             return s;
         }
@@ -214,10 +230,10 @@ export function matchSchool(schoolText, config) {
  * 按分类统计目标院校数量
  */
 export function getSchoolLabelCounts(candidates) {
-    const counts = { C9: 0, '985': 0, '211': 0 };
+    const counts = {};
     for (const c of candidates) {
-        if (c.schoolLabel && counts[c.schoolLabel] !== undefined) {
-            counts[c.schoolLabel]++;
+        if (c.schoolLabel) {
+            counts[c.schoolLabel] = (counts[c.schoolLabel] || 0) + 1;
         }
     }
     return counts;

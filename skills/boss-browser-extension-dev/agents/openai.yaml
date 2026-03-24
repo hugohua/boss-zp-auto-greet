@@ -1,7 +1,0 @@
-interface:
-  display_name: "Boss Browser Extension Dev"
-  short_description: "Develop and validate this MV3 browser extension safely."
-  default_prompt: "Use $boss-browser-extension-dev to implement or debug this browser extension in the current repository."
-
-policy:
-  allow_implicit_invocation: true
