@@ -13,6 +13,7 @@ let lastActionTime = 0;
 let behaviorTimer = null;
 let circuitBroken = false; // 熔断状态
 let consecutiveFailures = 0;
+let apmInterceptorInstalled = false;
 
 // ====== 公开 API ======
 
@@ -30,6 +31,7 @@ export function resetCircuitBreaker() {
     circuitBroken = false;
     consecutiveFailures = 0;
     logger.info('熔断已重置');
+    syncBehaviorSimulation();
 }
 
 /**
@@ -300,12 +302,24 @@ export function stopBehaviorSimulation() {
     }
 }
 
+export function syncBehaviorSimulation() {
+    const config = getConfig();
+    if (config.behaviorSimEnabled && !circuitBroken) {
+        startBehaviorSimulation();
+    } else {
+        stopBehaviorSimulation();
+    }
+}
+
 // ====== APM 埋点拦截 ======
 
 /**
  * 安装 XHR 拦截器，替换自动化工具产生的异常埋点数据
  */
 export function installApmInterceptor() {
+    if (apmInterceptorInstalled) return;
+    apmInterceptorInstalled = true;
+
     const originalOpen = XMLHttpRequest.prototype.open;
     const originalSend = XMLHttpRequest.prototype.send;
 

@@ -5,7 +5,7 @@
  */
 
 import { logger, queryAllFallback } from './utils.js';
-import { getConfig, matchSchool } from './config.js';
+import { getConfig, matchSchool, readStorage, writeStorage } from './config.js';
 
 // ====== 状态 ======
 const geekDataMap = new Map(); // geekId -> candidateInfo
@@ -15,31 +15,14 @@ let onChatGeekInfoUpdated = null; // 聊天页 geek/info 回调
 
 // ====== 学校缓存 ======
 const SCHOOL_CACHE_KEY = 'boss_helper_school_cache';
+const DOM_FALLBACK_PREFIX = 'dom_fallback_';
 
 function loadSchoolCache() {
-    try {
-        if (typeof GM_getValue === 'function') {
-            return GM_getValue(SCHOOL_CACHE_KEY, {});
-        }
-    } catch (e) { /* ignore */ }
-    try {
-        const val = localStorage.getItem(SCHOOL_CACHE_KEY);
-        return val ? JSON.parse(val) : {};
-    } catch (e) {
-        return {};
-    }
+    return readStorage(SCHOOL_CACHE_KEY, {});
 }
 
 function saveSchoolCache(cache) {
-    try {
-        if (typeof GM_setValue === 'function') {
-            GM_setValue(SCHOOL_CACHE_KEY, cache);
-            return;
-        }
-    } catch (e) { /* ignore */ }
-    try {
-        localStorage.setItem(SCHOOL_CACHE_KEY, JSON.stringify(cache));
-    } catch (e) { /* ignore */ }
+    writeStorage(SCHOOL_CACHE_KEY, cache);
 }
 
 function addToSchoolCache(uid, name, school, schoolLabel) {
@@ -146,6 +129,162 @@ function isChatListApi(url) {
         url.includes('/wapi/zprelation/friend/filterByLabel');
 }
 
+function pickValue(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null && value !== '') {
+            return value;
+        }
+    }
+    return '';
+}
+
+function extractSchoolFromText(text) {
+    if (!text || typeof text !== 'string') return '';
+
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    const match = normalized.match(/毕业于\s*([^·]+)/);
+    return match ? match[1].trim() : '';
+}
+
+function normalizeApiCandidate(geek) {
+    const card = geek.geekCard || {};
+    const topEdu = Array.isArray(geek.showEdus) ? geek.showEdus[0] : null;
+    const cardEdu = card.geekEdu || (Array.isArray(card.geekEdus) ? card.geekEdus[0] : null) || card.geekHighestDegreeEdu || null;
+
+    return {
+        uid: pickValue(geek.uid, geek.userId, card.geekId),
+        geekId: pickValue(geek.geekId, card.geekId, geek.encryptGeekId),
+        encryptGeekId: pickValue(geek.encryptGeekId, card.encryptGeekId, card.encGeekId),
+        name: pickValue(geek.geekName, geek.name, card.geekName),
+        school: pickValue(
+            geek.eduSchool,
+            geek.school,
+            topEdu?.school,
+            cardEdu?.school,
+            extractSchoolFromText(card.middleContent?.content),
+        ),
+        degree: pickValue(
+            geek.eduDegree,
+            geek.degree,
+            topEdu?.degreeName,
+            card.geekDegree,
+            cardEdu?.degreeName,
+        ),
+        title: pickValue(
+            geek.expectPositionName,
+            geek.title,
+            card.expectPositionName,
+            card.viewExpect?.positionName,
+        ),
+        experience: pickValue(geek.workYears, geek.experience, card.geekWorkYear),
+        age: pickValue(geek.age, card.ageDesc, card.ageLight?.content),
+        city: pickValue(geek.cityName, geek.city, card.expectLocationName, card.viewExpect?.locationName),
+        lid: pickValue(geek.lid, card.lid),
+        securityId: pickValue(geek.securityId, card.securityId),
+        expectId: pickValue(geek.expectId, card.expectId),
+        source: 'api',
+        hasApiData: true,
+    };
+}
+
+function mergeCandidateInfo(existing, incoming) {
+    const hasApiData = !!(existing.hasApiData || incoming.hasApiData);
+    const hasDomData = !!(existing.hasDomData || incoming.hasDomData);
+
+    return {
+        uid: pickValue(incoming.uid, existing.uid),
+        geekId: pickValue(incoming.geekId, existing.geekId),
+        encryptGeekId: pickValue(incoming.encryptGeekId, existing.encryptGeekId),
+        name: pickValue(incoming.name, existing.name, '未知'),
+        school: pickValue(incoming.school, existing.school),
+        degree: pickValue(incoming.degree, existing.degree),
+        title: pickValue(incoming.title, existing.title),
+        experience: pickValue(incoming.experience, existing.experience),
+        age: pickValue(incoming.age, existing.age),
+        city: pickValue(incoming.city, existing.city),
+        lid: pickValue(incoming.lid, existing.lid),
+        securityId: pickValue(incoming.securityId, existing.securityId),
+        expectId: pickValue(incoming.expectId, existing.expectId),
+        source: hasApiData ? 'api' : pickValue(incoming.source, existing.source),
+        hasApiData,
+        hasDomData,
+        greeted: existing.greeted,
+        greetedTime: existing.greetedTime,
+    };
+}
+
+function applyCandidateMatch(candidate, config = getConfig()) {
+    const schoolMatch = matchSchool(candidate.school, config);
+    candidate.isTarget = !!schoolMatch;
+    candidate.schoolLabel = schoolMatch ? schoolMatch.label : '';
+    return candidate;
+}
+
+function getSchoolLabelClass(label = '') {
+    const labelClassMap = {
+        '985': 'n985',
+        '211': 'n211',
+        '强相关': 'strong',
+        TOP50: 'top50',
+        海外: 'overseas',
+    };
+
+    return labelClassMap[label] || label;
+}
+
+function createDomFallbackKey({ name = '', school = '', title = '' }) {
+    const raw = [name, school, title]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join('|');
+
+    if (!raw) return '';
+
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) {
+        hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+        hash |= 0;
+    }
+
+    return `${DOM_FALLBACK_PREFIX}${Math.abs(hash).toString(36)}`;
+}
+
+function findCandidateKeyByIdentity(candidate, preferredKey = '') {
+    if (preferredKey && geekDataMap.has(preferredKey)) {
+        return preferredKey;
+    }
+
+    if (!candidate?.name || !candidate?.school) {
+        return '';
+    }
+
+    for (const [key, existing] of geekDataMap.entries()) {
+        if (key === preferredKey) continue;
+        if (existing.name !== candidate.name || existing.school !== candidate.school) continue;
+
+        if (candidate.title && existing.title && candidate.title !== existing.title) {
+            continue;
+        }
+
+        return key;
+    }
+
+    return '';
+}
+
+function isDomOnlyCandidate(candidate) {
+    return !!candidate && !candidate.hasApiData;
+}
+
+function clearRecommendCardHighlight(card) {
+    card.classList.remove('boss-helper-target');
+    Array.from(card.classList)
+        .filter((className) => className.startsWith('bh-target-'))
+        .forEach((className) => card.classList.remove(className));
+    card.removeAttribute('data-school-label');
+    card.querySelectorAll('.bh-card-label').forEach((label) => label.remove());
+}
+
 /**
  * 从 API 响应中解析候选人数据
  */
@@ -157,35 +296,23 @@ function parseApiCandidates(zpData) {
     let targetCount = 0;
 
     for (const geek of list) {
-        const info = {
-            geekId: geek.geekId || geek.encryptGeekId || '',
-            name: geek.geekName || geek.name || '未知',
-            school: geek.eduSchool || geek.school || '',
-            degree: geek.eduDegree || geek.degree || '',
-            title: geek.expectPositionName || geek.title || '',
-            experience: geek.workYears || geek.experience || '',
-            age: geek.age || '',
-            city: geek.cityName || geek.city || '',
-            encryptGeekId: geek.encryptGeekId || '',
-            lid: geek.lid || '',
-            securityId: geek.securityId || '',
-            expectId: geek.expectId || '',
-        };
+        const normalized = normalizeApiCandidate(geek);
+        const key = normalized.encryptGeekId || normalized.geekId;
+        if (!key) continue;
 
-        // 判断是否为目标院校
-        const schoolMatch = matchSchool(info.school, config);
-        info.isTarget = !!schoolMatch;
-        info.schoolLabel = schoolMatch ? schoolMatch.label : '';
+        const existingKey = findCandidateKeyByIdentity(normalized, key);
+        const existing = existingKey ? (geekDataMap.get(existingKey) || {}) : {};
+        const info = applyCandidateMatch(mergeCandidateInfo(existing, normalized), config);
         if (info.isTarget) targetCount++;
 
-        if (info.geekId || info.encryptGeekId) {
-            const key = info.encryptGeekId || info.geekId;
-            geekDataMap.set(key, info);
+        geekDataMap.set(key, info);
+        if (existingKey && existingKey !== key) {
+            geekDataMap.delete(existingKey);
         }
 
         // 将目标院校候选人写入持久化缓存（供聊天页使用）
-        if (info.isTarget && geek.uid) {
-            addToSchoolCache(geek.uid, info.name, info.school, info.schoolLabel);
+        if (info.isTarget && info.uid) {
+            addToSchoolCache(info.uid, info.name, info.school, info.schoolLabel);
         }
     }
 
@@ -232,11 +359,13 @@ function parseChatFriendList(zpData) {
 /**
  * DOM 回退筛选（当 API 拦截未生效时使用）
  */
-export function filterByDOM() {
+export function filterByDOM(options = {}) {
+    const { notify = true } = options;
     document.body.classList.add('bh-recommend-mode');
     document.body.classList.remove('bh-chat-mode');
     const config = getConfig();
     const cardSelectors = [
+        '.candidate-card-wrap',
         '.recommend-card-wrap',
         '.card-item',
         '.candidate-card',
@@ -246,10 +375,16 @@ export function filterByDOM() {
 
     const cards = queryAllFallback(cardSelectors);
     let targetCount = 0;
+    const seenKeys = new Set();
 
     cards.forEach(card => {
+        clearRecommendCardHighlight(card);
+
         // 尝试多种选择器获取学校信息
         const schoolSelectors = [
+            '.edu-exps .join-text-wrap.content span:first-child',
+            '.timeline-wrap.edu-exps .content span:first-child',
+            '.edu-exps .content',
             '[class*="school"]',
             '[class*="edu"]',
             '.info-school',
@@ -276,103 +411,113 @@ export function filterByDOM() {
             }
         }
 
-        const schoolMatch = matchSchool(schoolText, config);
-        const isTarget = !!schoolMatch;
+        // 提取基本信息
+        const nameEl = card.querySelector('span.name') || card.querySelector('[class*="name"]:not([class*="company"]):not([class*="wrap"])');
+        const titleEl = card.querySelector('[class*="title"], [class*="position"]');
 
-        if (isTarget) {
-            card.classList.add('boss-helper-target');
-            if (schoolMatch) {
-                const labelClass = schoolMatch.label === '985' ? 'n985' : schoolMatch.label === '211' ? 'n211' : schoolMatch.label;
-                card.classList.add(`bh-target-${labelClass}`);
-                card.setAttribute('data-school-label', schoolMatch.label);
+        const name = nameEl ? nameEl.textContent.trim() : '未知';
+        const title = titleEl ? titleEl.textContent.trim() : '';
+
+        const baseInfo = {
+            geekId: '',
+            name,
+            school: schoolText,
+            title,
+            source: 'dom',
+            hasDomData: true,
+        };
+
+        // 尝试获取 geekId
+        let encryptGeekId = card.getAttribute('data-bh-id');
+
+        if (!encryptGeekId) {
+            // 优先检查新型 BOSS 直聘卡片原生封装属性
+            const geekEl = card.querySelector('[data-geek], [data-geekid]');
+            if (geekEl) {
+                encryptGeekId = geekEl.getAttribute('data-geekid') || geekEl.getAttribute('data-geek') || '';
             }
-
-            // 避免重复添加标签
-            if (!card.querySelector('.bh-card-label') && schoolMatch) {
-                const labelSpan = document.createElement('span');
-                const labelClass = schoolMatch.label === '985' ? 'n985' : schoolMatch.label === '211' ? 'n211' : schoolMatch.label;
-                labelSpan.className = `bh-card-label ${labelClass}`;
-                labelSpan.textContent = schoolMatch.label;
-
-                // 尝试插在名字或学校旁边
-                const nameEl = card.querySelector('[class*="name"]:not([class*="company"])');
-                if (nameEl && nameEl.parentNode) {
-                    nameEl.parentNode.appendChild(labelSpan);
-                } else {
-                    const schoolEl = card.querySelector('[class*="school"], [class*="edu"], .info-school, .geek-school');
-                    if (schoolEl && schoolEl.parentNode) {
-                        schoolEl.parentNode.appendChild(labelSpan);
-                    }
-                }
-            }
-
-            targetCount++;
-
-            // 提取基本信息
-            const nameEl = card.querySelector('[class*="name"]:not([class*="company"])');
-            const titleEl = card.querySelector('[class*="title"], [class*="position"]');
-
-            const name = nameEl ? nameEl.textContent.trim() : '未知';
-            const title = titleEl ? titleEl.textContent.trim() : '';
-
-            // 尝试获取 geekId
-            let encryptGeekId = card.getAttribute('data-bh-id');
 
             if (!encryptGeekId) {
-                // 优先检查新型 BOSS 直聘卡片原生封装属性
-                const geekEl = card.querySelector('[data-geek], [data-geekid]');
-                if (geekEl) {
-                    encryptGeekId = geekEl.getAttribute('data-geekid') || geekEl.getAttribute('data-geek') || '';
-                }
-
-                if (!encryptGeekId) {
-                    const link = card.querySelector('a[href*="geek"]');
-                    if (link) {
-                        const match = link.href.match(/\/([a-zA-Z0-9_-]+)\.html/);
-                        if (match) {
-                            encryptGeekId = match[1];
-                        } else if (link.href.includes('?')) {
-                            try {
-                                const urlParams = new URLSearchParams(link.href.split('?')[1]);
-                                encryptGeekId = urlParams.get('geekId') || urlParams.get('encryptGeekId') || '';
-                            } catch (e) { }
-                        }
+                const link = card.querySelector('a[href*="geek"]');
+                if (link) {
+                    const match = link.href.match(/\/([a-zA-Z0-9_-]+)\.html/);
+                    if (match) {
+                        encryptGeekId = match[1];
+                    } else if (link.href.includes('?')) {
+                        try {
+                            const urlParams = new URLSearchParams(link.href.split('?')[1]);
+                            encryptGeekId = urlParams.get('geekId') || urlParams.get('encryptGeekId') || '';
+                        } catch (e) { }
                     }
                 }
-                if (!encryptGeekId) {
-                    const btn = card.querySelector('[ka*="greet"], .btn-greet');
-                    if (btn) {
-                        encryptGeekId = btn.getAttribute('data-geekid') || btn.getAttribute('data-encryptid') || '';
-                    }
-                }
-                if (!encryptGeekId) {
-                    // 终极回退：生成临时唯一ID确保能入库并被统计
-                    encryptGeekId = `dom_tmp_${name}_${Math.random().toString(36).substr(2, 6)}`;
-                }
-
-                // 将提取或生成的 ID 缓存在 DOM 上，避免同一张片重复生成不同的随机 ID
-                card.setAttribute('data-bh-id', encryptGeekId);
             }
-
-            if (encryptGeekId && !geekDataMap.has(encryptGeekId)) {
-                geekDataMap.set(encryptGeekId, {
-                    geekId: '',
-                    encryptGeekId,
-                    name,
-                    school: schoolText,
-                    schoolLabel: schoolMatch ? schoolMatch.label : '',
-                    title,
-                    isTarget: true,
-                    source: 'dom',
-                });
+            if (!encryptGeekId) {
+                const btn = card.querySelector('[ka*="greet"], .btn-greet');
+                if (btn) {
+                    encryptGeekId = btn.getAttribute('data-geekid') || btn.getAttribute('data-encryptid') || '';
+                }
             }
-        } else {
-            card.classList.remove('boss-helper-target');
+            if (!encryptGeekId) {
+                encryptGeekId = findCandidateKeyByIdentity(baseInfo) || createDomFallbackKey(baseInfo);
+            }
         }
+
+        if (encryptGeekId) {
+            seenKeys.add(encryptGeekId);
+            card.setAttribute('data-bh-id', encryptGeekId);
+        }
+
+        const existing = encryptGeekId ? (geekDataMap.get(encryptGeekId) || {}) : {};
+        const info = applyCandidateMatch(mergeCandidateInfo(existing, {
+            ...baseInfo,
+            encryptGeekId,
+        }), config);
+
+        if (encryptGeekId) {
+            if (info.isTarget || info.hasApiData) {
+                geekDataMap.set(encryptGeekId, info);
+            } else {
+                geekDataMap.delete(encryptGeekId);
+            }
+        }
+
+        if (!info.isTarget) {
+            return;
+        }
+
+        card.classList.add('boss-helper-target');
+        if (info.schoolLabel) {
+            const labelClass = getSchoolLabelClass(info.schoolLabel);
+            card.classList.add(`bh-target-${labelClass}`);
+            card.setAttribute('data-school-label', info.schoolLabel);
+
+            const labelSpan = document.createElement('span');
+            labelSpan.className = `bh-card-label ${labelClass}`;
+            labelSpan.textContent = info.schoolLabel;
+
+            // 尝试插在名字或学校旁边
+            if (nameEl && nameEl.parentNode) {
+                nameEl.parentNode.appendChild(labelSpan);
+            } else {
+                const schoolEl = card.querySelector('[class*="school"], [class*="edu"], .info-school, .geek-school');
+                if (schoolEl && schoolEl.parentNode) {
+                    schoolEl.parentNode.appendChild(labelSpan);
+                }
+            }
+        }
+
+        targetCount++;
     });
 
+    for (const [key, candidate] of geekDataMap.entries()) {
+        applyCandidateMatch(candidate, config);
+        if (isDomOnlyCandidate(candidate) && (!seenKeys.has(key) || !candidate.isTarget)) {
+            geekDataMap.delete(key);
+        }
+    }
+
     logger.info(`DOM 筛选: 扫描 ${cards.length} 张卡片，目标院校 ${targetCount} 名`);
-    if (onCandidatesUpdated) onCandidatesUpdated(geekDataMap);
+    if (notify && onCandidatesUpdated) onCandidatesUpdated(geekDataMap);
     return targetCount;
 }
 
@@ -380,7 +525,8 @@ export function filterByDOM() {
  * 获取目标候选人列表
  */
 export function getTargetCandidates() {
-    return Array.from(geekDataMap.values()).filter(c => c.isTarget);
+    const config = getConfig();
+    return Array.from(geekDataMap.values()).filter((candidate) => applyCandidateMatch(candidate, config).isTarget);
 }
 
 /**
@@ -460,7 +606,7 @@ export function filterChatListByDOM() {
                 return;
             }
 
-            const labelClass = cached.schoolLabel === '985' ? 'n985' : cached.schoolLabel === '211' ? 'n211' : cached.schoolLabel;
+            const labelClass = getSchoolLabelClass(cached.schoolLabel);
 
             // 添加高亮类
             card.classList.add('boss-helper-target', `bh-target-${labelClass}`);
@@ -532,7 +678,7 @@ export function highlightConversationPanel(info) {
         // 移除全局或父级内旧的高亮标记（防止重复插入）
         document.querySelectorAll('.bh-chat-school-label').forEach(el => el.remove());
 
-        const labelClass = info.schoolMatch.label === '985' ? 'n985' : info.schoolMatch.label === '211' ? 'n211' : info.schoolMatch.label;
+        const labelClass = getSchoolLabelClass(info.schoolMatch.label);
         const labelSpan = document.createElement('span');
         labelSpan.className = `bh-card-label bh-chat-school-label ${labelClass}`;
         labelSpan.textContent = `${info.schoolMatch.label} · ${info.school}`;

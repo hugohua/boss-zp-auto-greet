@@ -1,11 +1,24 @@
 ---
 name: boss-userscript-test-first
-description: Test-first development workflow for the BOSS Zhipin userscript in this repository. Use when Codex needs to implement, refactor, debug, review, or validate changes to candidate filtering, greeting automation, anti-detect behavior, config persistence, UI panel code, DOM selectors, saved fixtures, or build output in Antigravity IDE, and the task should begin by writing or updating tests before production code.
+description: Test-first and review-first workflow for the BOSS Zhipin userscript in this repository. Use when Codex needs to implement, refactor, debug, review, or validate changes to candidate filtering, greeting automation, anti-detect behavior, config persistence, UI panel code, DOM selectors, saved fixtures, or build output, and must write or update tests before production code, then finish with a focused code review.
 ---
 
 # Boss Userscript Test First
 
 Follow this workflow when changing this repository from Antigravity IDE.
+
+## Default loop
+
+Use this sequence unless the task is truly trivial:
+
+1. Read only the owning files for the requested behavior.
+2. Write or update the narrowest failing test or fixture-backed scenario first.
+3. Run that narrow test and confirm it fails for the expected reason.
+4. Change the smallest production surface that can make the test pass.
+5. Re-run the narrow test, then the broader relevant suite, then `npm run build`.
+6. End with a code review of the actual diff, calling out risks, missing coverage, and live-site uncertainty.
+
+Do not start production edits before step 3 unless the task is a pure documentation or comment change.
 
 ## Start from the repo map
 
@@ -40,7 +53,8 @@ Use this order every time:
 1. Define the user-visible behavior and the smallest proof that it still works.
 2. Choose the validation layer before touching production code.
 3. Write or update the tests first.
-4. Only then change the production code.
+4. Run the narrow test to confirm the gap is real.
+5. Only then change the production code.
 
 Treat these as acceptable safety nets, ordered by strength:
 
@@ -125,15 +139,18 @@ Always preserve these repo-specific behaviors:
 
 Before closing the task:
 
+- confirm at least one new or updated test existed before the production diff
 - run the new or changed tests first
 - run the broader relevant suite
 - run `npm run build`
 - confirm `dist/boss-zhipin.user.js` is still produced
 - run manual checks for any live-page risks that cannot be automated
+- review the diff for behavior regression risk, especially state loss, selector drift, and API shape changes
 
 In the final response:
 
 - say which tests were written first
 - list the commands that were run
 - state which manual checks were completed
+- summarize the code review findings, or state explicitly that no findings were found
 - call out any coverage gaps or live-site risk clearly

@@ -5,11 +5,13 @@
 
 import { getConfig, updateConfig, getDailyCount, getSchoolLabelCounts, parseSchoolsText, serializeSchoolsText } from '../config.js';
 import { logger, setLogChangeCallback, getTodayKey } from '../utils.js';
-import { isCircuitBroken, resetCircuitBreaker } from '../anti-detect.js';
+import { isCircuitBroken, resetCircuitBreaker, syncBehaviorSimulation } from '../anti-detect.js';
 import { getTargetCandidates, filterByDOM } from '../filter.js';
 import { startAutoGreeting, stopAutoGreeting, isGreetingRunning, setOnStatusChange } from '../greeting.js';
 import { showNotification } from './notification.js';
 import { showRecordsModal } from './records.js';
+
+let statsRefreshTimer = null;
 
 // ====== 面板 HTML ======
 
@@ -173,7 +175,9 @@ export function createPanel() {
   setupStatusUpdater();
 
   // 启动周期性统计刷新
-  setInterval(refreshStats, 5000);
+  if (!statsRefreshTimer) {
+    statsRefreshTimer = setInterval(refreshStats, 5000);
+  }
 }
 
 // ====== 事件绑定 ======
@@ -333,8 +337,11 @@ function saveSettings() {
     enabledSchoolLabels: enabledLabels,
   });
 
+  syncBehaviorSimulation();
+
   // 刷新标签选择器和统计
   renderLabelBadges();
+  filterByDOM({ notify: false });
   refreshStats();
   showNotification('设置已保存', 'success');
 }

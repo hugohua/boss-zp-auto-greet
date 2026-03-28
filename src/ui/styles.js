@@ -455,9 +455,25 @@ export function injectStyles() {
       box-shadow: 0 4px 16px rgba(59, 130, 246, 0.15) !important;
       background: linear-gradient(135deg, #eff6ff 0%, #ffffff 40%) !important;
     }
+    .bh-recommend-mode .boss-helper-target.bh-target-strong {
+      border: 2px solid #10b981 !important;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.15) !important;
+      background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 40%) !important;
+    }
+    .bh-recommend-mode .boss-helper-target.bh-target-top50 {
+      border: 2px solid #8b5cf6 !important;
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.15) !important;
+      background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 40%) !important;
+    }
+    .bh-recommend-mode .boss-helper-target.bh-target-overseas {
+      border: 2px solid #64748b !important;
+      box-shadow: 0 4px 16px rgba(100, 116, 139, 0.15) !important;
+      background: linear-gradient(135deg, #f8fafc 0%, #ffffff 40%) !important;
+    }
 
     /* 悬浮角标 */
     .boss-helper-target::before {
+      border-top-left-radius: 7px;
       content: attr(data-school-label);
       position: absolute;
       top: 0;
@@ -475,6 +491,9 @@ export function injectStyles() {
     .boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
     .boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
     .boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .boss-helper-target.bh-target-strong::before { background: linear-gradient(135deg, #10b981, #059669); }
+    .boss-helper-target.bh-target-top50::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+    .boss-helper-target.bh-target-overseas::before { background: linear-gradient(135deg, #64748b, #475569); }
 
     /* 内部备用小标签 */
     .bh-card-label {
@@ -493,6 +512,9 @@ export function injectStyles() {
     .bh-card-label.C9 { background: #fef2f2 !important; color: #b91c1c !important; border-color: #fecaca !important; }
     .bh-card-label.n985 { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
     .bh-card-label.n211 { background: #f0f9ff !important; color: #0369a1 !important; border-color: #bfdbfe !important; }
+    .bh-card-label.strong { background: #ecfdf5 !important; color: #047857 !important; border-color: #a7f3d0 !important; }
+    .bh-card-label.top50 { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
+    .bh-card-label.overseas { background: #f8fafc !important; color: #334155 !important; border-color: #cbd5e1 !important; }
 
     /* ====== 全局悬浮气泡通知 ====== */
     .bh-notification {

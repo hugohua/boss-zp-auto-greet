@@ -135,13 +135,131 @@ export function scrollToElement(el, offset = 100) {
     window.scrollTo({ top: targetY, behavior: 'smooth' });
 }
 
+export function isDocumentScrollContainer(container) {
+    return !container ||
+        container === window ||
+        container === document ||
+        container === document.body ||
+        container === document.documentElement ||
+        container === document.scrollingElement;
+}
+
+export function isScrollableElement(el, threshold = 8) {
+    if (!el || !(el instanceof Element)) return false;
+
+    const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    const overflowY = style?.overflowY || style?.overflow || '';
+    const canScroll = ['auto', 'scroll', 'overlay'].includes(overflowY);
+    return canScroll && el.scrollHeight > el.clientHeight + threshold;
+}
+
+export function getScrollMetrics(container = null) {
+    if (isDocumentScrollContainer(container)) {
+        const scroller = document.scrollingElement || document.documentElement || document.body;
+        return {
+            scrollTop: window.scrollY || scroller?.scrollTop || 0,
+            clientHeight: window.innerHeight || scroller?.clientHeight || 0,
+            scrollHeight: Math.max(
+                scroller?.scrollHeight || 0,
+                document.body?.scrollHeight || 0,
+                document.documentElement?.scrollHeight || 0,
+            ),
+        };
+    }
+
+    return {
+        scrollTop: container.scrollTop || 0,
+        clientHeight: container.clientHeight || 0,
+        scrollHeight: container.scrollHeight || 0,
+    };
+}
+
+export function findScrollableContainer(target = null, selectors = []) {
+    const candidates = [];
+    const seen = new Set();
+
+    const pushCandidate = (el) => {
+        if (!el || seen.has(el)) return;
+        seen.add(el);
+        candidates.push(el);
+    };
+
+    if (target && target.nodeType === 1) {
+        let node = target;
+        while (node) {
+            pushCandidate(node);
+            node = node.parentElement;
+        }
+    }
+
+    selectors.forEach((sel) => {
+        try {
+            pushCandidate(document.querySelector(sel));
+        } catch (e) {
+            // 忽略无效选择器
+        }
+    });
+
+    const documentScroller = document.scrollingElement || document.documentElement || document.body;
+    pushCandidate(documentScroller);
+    pushCandidate(document.documentElement);
+    pushCandidate(document.body);
+
+    return candidates.find((candidate) => isScrollableElement(candidate)) || documentScroller;
+}
+
+export function scrollContainerTo(container, top, behavior = 'smooth') {
+    const safeTop = Math.max(0, Number(top) || 0);
+
+    if (isDocumentScrollContainer(container)) {
+        if (typeof window.scrollTo === 'function') {
+            window.scrollTo({ top: safeTop, behavior });
+        } else {
+            const scroller = document.scrollingElement || document.documentElement || document.body;
+            if (scroller) scroller.scrollTop = safeTop;
+        }
+        window.dispatchEvent(new Event('scroll'));
+        return;
+    }
+
+    if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: safeTop, behavior });
+    } else {
+        container.scrollTop = safeTop;
+    }
+    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+}
+
+export function scrollContainerBy(container, delta, behavior = 'smooth') {
+    const metrics = getScrollMetrics(container);
+    scrollContainerTo(container, metrics.scrollTop + delta, behavior);
+}
+
+export function describeScrollContainer(container) {
+    if (isDocumentScrollContainer(container)) return 'window';
+    if (!container) return 'unknown';
+
+    const parts = [container.tagName?.toLowerCase()].filter(Boolean);
+    if (container.id) parts.push(`#${container.id}`);
+
+    const classNames = typeof container.className === 'string'
+        ? container.className.trim().split(/\s+/).filter(Boolean).slice(0, 2)
+        : [];
+    classNames.forEach((className) => parts.push(`.${className}`));
+
+    return parts.join('') || 'unknown';
+}
+
 // ====== 日期工具 ======
 
 /**
  * 获取今天的日期字符串 YYYY-MM-DD
  */
-export function getTodayKey() {
-    return new Date().toISOString().slice(0, 10);
+export function getTodayKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 /**

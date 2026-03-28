@@ -3,6 +3,8 @@
  * 集中管理所有配置项，使用 GM_setValue/GM_getValue 持久化
  */
 
+import { getTodayKey } from './utils.js';
+
 // ====== 默认配置 ======
 
 const DEFAULTS = {
@@ -275,9 +277,9 @@ const DAILY_COUNT_KEY = 'boss_helper_daily_count';
 let currentConfig = null;
 
 /**
- * 安全调用 GM_getValue
+ * 安全读取持久化值
  */
-function gmGet(key, defaultValue) {
+export function readStorage(key, defaultValue) {
     try {
         if (typeof GM_getValue === 'function') {
             return GM_getValue(key, defaultValue);
@@ -295,9 +297,9 @@ function gmGet(key, defaultValue) {
 }
 
 /**
- * 安全调用 GM_setValue
+ * 安全写入持久化值
  */
-function gmSet(key, value) {
+export function writeStorage(key, value) {
     try {
         if (typeof GM_setValue === 'function') {
             GM_setValue(key, value);
@@ -320,7 +322,7 @@ function gmSet(key, value) {
  * 加载配置（合并默认值 + 持久化值）
  */
 export function loadConfig() {
-    const saved = gmGet(STORAGE_KEY, {});
+    const saved = readStorage(STORAGE_KEY, {});
     currentConfig = { ...DEFAULTS, ...saved };
     return currentConfig;
 }
@@ -338,7 +340,7 @@ export function getConfig() {
  */
 export function updateConfig(partial) {
     currentConfig = { ...getConfig(), ...partial };
-    gmSet(STORAGE_KEY, currentConfig);
+    writeStorage(STORAGE_KEY, currentConfig);
     return currentConfig;
 }
 
@@ -347,7 +349,7 @@ export function updateConfig(partial) {
  */
 export function resetConfig() {
     currentConfig = { ...DEFAULTS };
-    gmSet(STORAGE_KEY, currentConfig);
+    writeStorage(STORAGE_KEY, currentConfig);
     return currentConfig;
 }
 
@@ -423,7 +425,7 @@ export function serializeSchoolsText(schools) {
  * 获取所有打招呼记录
  */
 export function getRecords() {
-    return gmGet(RECORDS_KEY, []);
+    return readStorage(RECORDS_KEY, []);
 }
 
 /**
@@ -437,7 +439,7 @@ export function addRecord(record) {
     });
     // 最多保留最近 500 条
     if (records.length > 500) records.splice(0, records.length - 500);
-    gmSet(RECORDS_KEY, records);
+    writeStorage(RECORDS_KEY, records);
     return records;
 }
 
@@ -445,14 +447,14 @@ export function addRecord(record) {
  * 清空记录
  */
 export function clearRecords() {
-    gmSet(RECORDS_KEY, []);
+    writeStorage(RECORDS_KEY, []);
 }
 
 // ====== 每日计数管理 ======
 
 function getDailyCountData() {
-    const today = new Date().toISOString().slice(0, 10);
-    const data = gmGet(DAILY_COUNT_KEY, { date: today, total: 0 });
+    const today = getTodayKey();
+    const data = readStorage(DAILY_COUNT_KEY, { date: today, total: 0 });
     // 日期变了就重置
     if (data.date !== today) {
         return { date: today, total: 0 };
@@ -473,7 +475,7 @@ export function getDailyCount() {
 export function incrementCount() {
     const data = getDailyCountData();
     data.total += 1;
-    gmSet(DAILY_COUNT_KEY, data);
+    writeStorage(DAILY_COUNT_KEY, data);
     return data;
 }
 
