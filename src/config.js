@@ -11,7 +11,7 @@ const DEFAULTS = {
     // 打招呼间隔（秒）
     greetInterval: 10,
     // 单日打招呼上限
-    dailyLimit: 200,
+    dailyLimit: 150,
     // 连续操作上限（到达后触发休息）
     consecutiveLimit: 20,
     // 休息时长范围（秒）

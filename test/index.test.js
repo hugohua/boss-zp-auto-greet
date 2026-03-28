@@ -60,7 +60,7 @@ describe('index.js (SPA Routing & Initialization)', () => {
             },
             writable: true
         });
-        document.body.innerHTML = '<div class="user-list"></div>'; // Mock chat container for Observer
+        document.body.innerHTML = '';
     });
 
     afterEach(() => {
@@ -71,6 +71,18 @@ describe('index.js (SPA Routing & Initialization)', () => {
     });
 
     it('should run initChatMode when navigating from recommend to chat page', async () => {
+        document.body.innerHTML = `
+            <ul class="card-list">
+                <li class="card-item">
+                    <div class="candidate-card-wrap">
+                        <div class="card-inner" data-geek="target-1" data-geekid="target-1">
+                            <span class="name">马珑航</span>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        `;
+
         // Import index.js dynamically so it runs `initialize()` with jsdom env
         await import('../src/index.js');
 
@@ -83,6 +95,7 @@ describe('index.js (SPA Routing & Initialization)', () => {
 
         // 2. Simulate SPA navigation to chat page
         window.location.pathname = '/web/chat/index';
+        document.body.innerHTML = '<div class="user-list"></div><div class="conversation-main"></div>';
 
         // 3. Fast-forward setInterval (1000ms checking for location pathname change)
         vi.advanceTimersByTime(1100);
@@ -90,6 +103,152 @@ describe('index.js (SPA Routing & Initialization)', () => {
         // 4. 聊天模式会启动延迟扫描
         vi.advanceTimersByTime(2100);
         expect(filterModule.filterChatListByDOM).toHaveBeenCalled();
+    });
+
+    it('should swap body mode classes shortly after chat DOM replaces recommend DOM', async () => {
+        document.body.innerHTML = `
+            <ul class="card-list">
+                <li class="card-item">
+                    <div class="candidate-card-wrap">
+                        <div class="card-inner" data-geek="target-1" data-geekid="target-1">
+                            <span class="name">马珑航</span>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        `;
+
+        await import('../src/index.js');
+
+        expect(document.body.classList.contains('bh-recommend-mode')).toBe(true);
+        expect(document.body.classList.contains('bh-chat-mode')).toBe(false);
+
+        window.location.pathname = '/web/chat/index';
+        window.location.href = 'https://www.zhipin.com/web/chat/index';
+        document.body.innerHTML = `
+            <div class="chat-conversation">
+                <div class="user-list"></div>
+                <div class="conversation-main"></div>
+            </div>
+        `;
+
+        vi.advanceTimersByTime(300);
+
+        expect(document.body.classList.contains('bh-chat-mode')).toBe(true);
+        expect(document.body.classList.contains('bh-recommend-mode')).toBe(false);
+    });
+
+    it('should switch into chat mode when chat DOM appears even if the url does not change', async () => {
+        document.body.innerHTML = `
+            <ul class="card-list">
+                <li class="card-item">
+                    <div class="candidate-card-wrap">
+                        <div class="card-inner" data-geek="target-1" data-geekid="target-1">
+                            <span class="name">马珑航</span>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        `;
+
+        await import('../src/index.js');
+
+        filterModule.filterChatListByDOM.mockClear();
+
+        document.body.innerHTML = `
+            <div class="chat-conversation">
+                <div class="user-list"></div>
+                <div class="conversation-main"></div>
+            </div>
+        `;
+
+        vi.advanceTimersByTime(1100);
+        vi.advanceTimersByTime(2100);
+
+        expect(filterModule.filterChatListByDOM).toHaveBeenCalled();
+    });
+
+    it('should enter recommend mode only once when recommend DOM appears after loading the chat page', async () => {
+        Object.defineProperty(window, 'location', {
+            value: {
+                pathname: '/web/chat/index',
+                href: 'https://www.zhipin.com/web/chat/index',
+                includes: vi.fn((str) => '/web/chat/index'.includes(str))
+            },
+            writable: true
+        });
+
+        document.body.innerHTML = '<div class="user-list"></div><div class="conversation-main"></div>';
+
+        await import('../src/index.js');
+
+        panelModule.createPanel.mockClear();
+        filterModule.filterByDOM.mockClear();
+        panelModule.refreshStats.mockClear();
+
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <div class="list-body">
+                        <ul class="card-list">
+                            <li class="card-item">
+                                <div class="candidate-card-wrap">
+                                    <div class="card-inner" data-geek="target-1" data-geekid="target-1">
+                                        <span class="name">马珑航</span>
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        vi.advanceTimersByTime(1100);
+        vi.advanceTimersByTime(3100);
+
+        expect(panelModule.createPanel).toHaveBeenCalledTimes(1);
+        expect(filterModule.filterByDOM).toHaveBeenCalled();
+        expect(panelModule.refreshStats).toHaveBeenCalled();
+    });
+
+    it('should wait for recommend DOM before creating the panel', async () => {
+        Object.defineProperty(window, 'location', {
+            value: {
+                pathname: '/web/chat/recommend',
+                href: 'https://www.zhipin.com/web/chat/recommend',
+                includes: vi.fn((str) => '/web/chat/recommend'.includes(str))
+            },
+            writable: true
+        });
+
+        document.body.innerHTML = '<div class="container-wrap"></div>';
+
+        await import('../src/index.js');
+
+        expect(panelModule.createPanel).not.toHaveBeenCalled();
+
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <div class="list-body">
+                        <ul class="card-list">
+                            <li class="card-item">
+                                <div class="candidate-card-wrap">
+                                    <div class="card-inner" data-geek="target-1" data-geekid="target-1">
+                                        <span class="name">马珑航</span>
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        vi.advanceTimersByTime(350);
+
+        expect(panelModule.createPanel).toHaveBeenCalledTimes(1);
     });
 
     it('should rescan recommend list when similar candidate cards are injected into .card-list', async () => {
@@ -260,5 +419,35 @@ describe('index.js (SPA Routing & Initialization)', () => {
         vi.advanceTimersByTime(200);
 
         expect(filterModule.filterChatListByDOM).not.toHaveBeenCalled();
+    });
+
+    it('should refresh only the chat list when prefetched geek info arrives', async () => {
+        Object.defineProperty(window, 'location', {
+            value: {
+                pathname: '/web/chat/index',
+                href: 'https://www.zhipin.com/web/chat/index',
+                includes: vi.fn((str) => '/web/chat/index'.includes(str))
+            },
+            writable: true
+        });
+
+        document.body.innerHTML = '<div class="user-list"></div>';
+
+        await import('../src/index.js');
+
+        const callback = filterModule.setOnChatGeekInfoUpdated.mock.calls[0][0];
+        filterModule.filterChatListByDOM.mockClear();
+        filterModule.highlightConversationPanel.mockClear();
+
+        callback({
+            prefetch: true,
+            name: '杜康磊',
+            schoolMatch: { label: 'C9' },
+        });
+
+        vi.advanceTimersByTime(150);
+
+        expect(filterModule.filterChatListByDOM).toHaveBeenCalledTimes(1);
+        expect(filterModule.highlightConversationPanel).not.toHaveBeenCalled();
     });
 });

@@ -18,6 +18,7 @@ let routeWatcherTimer = null;
 let visibilityListenerBound = false;
 let recommendObserver = null;
 let recommendObserverRetryTimer = null;
+let recommendPanelRetryTimer = null;
 let recommendScrollBindTimer = null;
 let recommendScrollHandler = null;
 let recommendScrollContainer = null;
@@ -26,6 +27,21 @@ let chatObserverRetryTimer = null;
 let chatScrollHandler = null;
 let candidateRescanTimer = null;
 let chatListRefreshTimer = null;
+const ROUTE_WATCH_INTERVAL_MS = 250;
+const CHAT_PAGE_DOM_SELECTORS = [
+    '.conversation-main',
+    '.chat-conversation',
+    '.user-list',
+    '.chat-list',
+    '[class*="friend-list"]',
+];
+const RECOMMEND_PAGE_DOM_SELECTORS = [
+    '.candidate-body',
+    '.card-list',
+    '.recommend-list-wrap',
+    '.candidate-card-wrap',
+    '.similar-geek-wrap',
+];
 const RECOMMEND_SCROLL_CONTAINER_SELECTORS = [
     '.list-body',
     '#recommend-list',
@@ -43,17 +59,122 @@ function debounce(fn, delay) {
     };
 }
 
-// 路由检测（兼容 iframe 和顶层窗口）
-function isChatPage() {
-    const isChatUrl = (url) => url.includes('/web/chat/') && !url.includes('/recommend') && !url.includes('/frame/');
+function isChatUrl(url = '') {
+    return url.includes('/web/chat/') && !url.includes('/recommend') && !url.includes('/frame/');
+}
 
-    // 直接在聊天页打开时
-    if (isChatUrl(location.pathname)) return true;
-    // 在 iframe 中时，检查顶层窗口
+function isRecommendUrl(url = '') {
+    return url.includes('/recommend');
+}
+
+function readWindowLocationSnapshot(targetWindow) {
     try {
-        if (window.top && window.top.location && isChatUrl(window.top.location.pathname)) return true;
-    } catch (e) { /* 跨域 iframe 忽略 */ }
-    return false;
+        const targetLocation = targetWindow?.location;
+        if (!targetLocation) {
+            return { pathname: '', href: '' };
+        }
+        return {
+            pathname: String(targetLocation.pathname || ''),
+            href: String(targetLocation.href || targetLocation.pathname || ''),
+        };
+    } catch (e) {
+        return { pathname: '', href: '' };
+    }
+}
+
+function getObservedLocationSnapshots() {
+    const currentSnapshot = readWindowLocationSnapshot(window);
+    const snapshots = [currentSnapshot];
+    const topSnapshot = readWindowLocationSnapshot(window.top);
+
+    if (
+        (topSnapshot.href || topSnapshot.pathname) &&
+        (topSnapshot.href !== currentSnapshot.href || topSnapshot.pathname !== currentSnapshot.pathname)
+    ) {
+        snapshots.push(topSnapshot);
+    }
+
+    return snapshots;
+}
+
+function hasAnyDomMarker(selectors) {
+    return selectors.some((selector) => !!document.querySelector(selector));
+}
+
+function hasRecommendPageDom() {
+    return hasAnyDomMarker(RECOMMEND_PAGE_DOM_SELECTORS);
+}
+
+function syncBodyModeClass(mode) {
+    if (!document.body) return;
+
+    document.body.classList.toggle('bh-chat-mode', mode === 'chat');
+    document.body.classList.toggle('bh-recommend-mode', mode === 'recommend');
+}
+
+function detectPageMode() {
+    const snapshots = getObservedLocationSnapshots();
+    const currentSnapshot = snapshots[0] || { pathname: '', href: '' };
+    const hasChatDom = hasAnyDomMarker(CHAT_PAGE_DOM_SELECTORS);
+    const hasRecommendDom = hasAnyDomMarker(RECOMMEND_PAGE_DOM_SELECTORS);
+    const hasCurrentChatUrl = isChatUrl(currentSnapshot.pathname) || isChatUrl(currentSnapshot.href);
+    const hasCurrentRecommendUrl = isRecommendUrl(currentSnapshot.pathname) || isRecommendUrl(currentSnapshot.href);
+    const hasObservedChatUrl = snapshots.some(({ pathname, href }) => isChatUrl(pathname) || isChatUrl(href));
+    const hasObservedRecommendUrl = snapshots.some(({ pathname, href }) => isRecommendUrl(pathname) || isRecommendUrl(href));
+
+    // DOM 已经切页但 SPA URL 还没跟上的时候，以当前文档结构为准。
+    if (hasChatDom && !hasRecommendDom) return 'chat';
+    if (hasRecommendDom && !hasChatDom) return 'recommend';
+
+    if (hasCurrentChatUrl) return 'chat';
+    if (hasCurrentRecommendUrl) return 'recommend';
+
+    if (hasObservedChatUrl && !hasRecommendDom) return 'chat';
+    if (hasObservedRecommendUrl && !hasChatDom) return 'recommend';
+
+    if (hasChatDom) return 'chat';
+    if (hasRecommendDom) return 'recommend';
+
+    return currentPageMode || 'recommend';
+}
+
+function isChatPage() {
+    return detectPageMode() === 'chat';
+}
+
+function getRouteWatchKey() {
+    const routeParts = getObservedLocationSnapshots()
+        .map(({ href, pathname }) => href || pathname)
+        .filter(Boolean);
+    return Array.from(new Set(routeParts)).join(' | ') || 'unknown';
+}
+
+function scheduleRecommendPanelEnsure(delay = 0) {
+    if (delay <= 0 && currentPageMode === 'recommend' && hasRecommendPageDom()) {
+        createPanel();
+        if (recommendPanelRetryTimer) {
+            clearTimeout(recommendPanelRetryTimer);
+            recommendPanelRetryTimer = null;
+        }
+        return;
+    }
+
+    if (recommendPanelRetryTimer) {
+        clearTimeout(recommendPanelRetryTimer);
+        recommendPanelRetryTimer = null;
+    }
+
+    recommendPanelRetryTimer = setTimeout(() => {
+        if (currentPageMode !== 'recommend') return;
+
+        if (hasRecommendPageDom()) {
+            createPanel();
+            recommendPanelRetryTimer = null;
+            return;
+        }
+
+        scheduleRecommendPanelEnsure(300);
+    }, delay);
 }
 
 function isRelevantRecommendListNode(node) {
@@ -155,6 +276,11 @@ function stopRecommendMode() {
     if (recommendObserverRetryTimer) {
         clearTimeout(recommendObserverRetryTimer);
         recommendObserverRetryTimer = null;
+    }
+
+    if (recommendPanelRetryTimer) {
+        clearTimeout(recommendPanelRetryTimer);
+        recommendPanelRetryTimer = null;
     }
 
     if (recommendScrollBindTimer) {
@@ -272,7 +398,7 @@ function startChatMode() {
 }
 
 function startRecommendMode() {
-    createPanel();
+    scheduleRecommendPanelEnsure();
     recommendScrollHandler = debounce(() => scanCurrentPage('scroll'), 800);
     window.addEventListener('scroll', recommendScrollHandler, { passive: true });
     scheduleRecommendScrollBinding();
@@ -284,7 +410,8 @@ function startRecommendMode() {
 }
 
 function syncPageMode() {
-    const nextMode = isChatPage() ? 'chat' : 'recommend';
+    const nextMode = detectPageMode();
+    syncBodyModeClass(nextMode);
     if (nextMode === currentPageMode) return;
 
     if (currentPageMode === 'chat') {
@@ -306,16 +433,19 @@ function syncPageMode() {
 function startRouteWatcher() {
     if (routeWatcherTimer) return;
 
-    let lastPath = location.pathname;
+    let lastRouteKey = getRouteWatchKey();
     routeWatcherTimer = setInterval(() => {
-        if (location.pathname !== lastPath) {
-            const oldPath = lastPath;
-            lastPath = location.pathname;
-            logger.info(`路由变化: ${oldPath} → ${lastPath}`);
+        const nextRouteKey = getRouteWatchKey();
+        const nextMode = detectPageMode();
+
+        if (nextRouteKey !== lastRouteKey || nextMode !== currentPageMode) {
+            const oldRouteKey = lastRouteKey;
+            lastRouteKey = nextRouteKey;
+            logger.info(`路由/模式变化: ${oldRouteKey} → ${nextRouteKey}，mode=${currentPageMode || 'none'}→${nextMode}`);
             syncPageMode();
             scheduleModeScans(currentPageMode, [1500, 4000]);
         }
-    }, 1000);
+    }, ROUTE_WATCH_INTERVAL_MS);
 }
 
 function bindVisibilityListener() {
@@ -361,6 +491,8 @@ function initialize() {
 
         if (info.type === 'listRefresh') {
             scheduleChatListRefresh(500);
+        } else if (info.prefetch) {
+            scheduleChatListRefresh(120);
         } else if (currentPageMode === 'chat' || isChatPage()) {
             highlightConversationPanel(info);
         }

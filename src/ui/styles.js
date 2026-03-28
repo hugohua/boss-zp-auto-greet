@@ -334,6 +334,7 @@ export function injectStyles() {
       justify-content: center;
       flex-shrink: 0;
       outline: none;
+      cursor: help;
     }
     .bh-help-icon {
       width: 16px;
@@ -349,36 +350,42 @@ export function injectStyles() {
       line-height: 1;
       transition: all 0.2s;
     }
-    .bh-help-bubble {
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 8px);
-      transform: translateX(-50%) translateY(4px);
-      width: 220px;
-      padding: 8px 10px;
-      border-radius: 8px;
+    .bh-help-tip:hover .bh-help-icon,
+    .bh-help-tip:focus .bh-help-icon,
+    .bh-help-tip.is-active .bh-help-icon {
+      background: #cbd5e1;
+      color: #0f172a;
+    }
+    .bh-help-tooltip-layer {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 10001;
+      padding: 10px 12px;
+      border-radius: 10px;
       background: rgba(15, 23, 42, 0.96);
       color: #f8fafc;
       font-size: 11px;
-      line-height: 1.5;
+      line-height: 1.6;
       box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
       opacity: 0;
       visibility: hidden;
+      transform: translateY(4px);
+      transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
       pointer-events: none;
-      transition: all 0.2s ease;
-      z-index: 3;
       white-space: normal;
+      word-break: break-word;
     }
-    .bh-help-tip:hover .bh-help-bubble,
-    .bh-help-tip:focus-within .bh-help-bubble {
+    .bh-help-tooltip-layer.visible {
       opacity: 1;
       visibility: visible;
-      transform: translateX(-50%) translateY(0);
+      transform: translateY(0);
     }
-    .bh-help-tip:hover .bh-help-icon,
-    .bh-help-tip:focus-within .bh-help-icon {
-      background: #cbd5e1;
-      color: #0f172a;
+    .bh-help-tooltip-layer.below {
+      transform: translateY(-4px);
+    }
+    .bh-help-tooltip-layer.below.visible {
+      transform: translateY(0);
     }
 
     /* Filter rules */
@@ -509,39 +516,40 @@ export function injectStyles() {
       z-index: 10;
     }
     
-    .bh-recommend-mode .boss-helper-target.bh-target-C9 {
+    /* 推荐页整卡高亮只作用于推荐卡片，避免切到聊天页时旧模式样式短暂串到会话列表 */
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-C9 {
       border: 2px solid #ef4444 !important;
       box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15) !important;
       background: linear-gradient(135deg, #fef2f2 0%, #ffffff 40%) !important;
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-n985 {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-n985 {
       border: 2px solid #f59e0b !important;
       box-shadow: 0 4px 16px rgba(245, 158, 11, 0.15) !important;
       background: linear-gradient(135deg, #fffbeb 0%, #ffffff 40%) !important;
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-n211 {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-n211 {
       border: 2px solid #3b82f6 !important;
       box-shadow: 0 4px 16px rgba(59, 130, 246, 0.15) !important;
       background: linear-gradient(135deg, #eff6ff 0%, #ffffff 40%) !important;
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-strong {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-strong {
       border: 2px solid #10b981 !important;
       box-shadow: 0 4px 16px rgba(16, 185, 129, 0.15) !important;
       background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 40%) !important;
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-top50 {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-top50 {
       border: 2px solid #8b5cf6 !important;
       box-shadow: 0 4px 16px rgba(139, 92, 246, 0.15) !important;
       background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 40%) !important;
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-overseas {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-overseas {
       border: 2px solid #64748b !important;
       box-shadow: 0 4px 16px rgba(100, 116, 139, 0.15) !important;
       background: linear-gradient(135deg, #f8fafc 0%, #ffffff 40%) !important;
     }
 
     /* 悬浮角标 */
-    .bh-recommend-mode .boss-helper-target::before {
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target::before {
       border-top-left-radius: 7px;
       content: attr(data-school-label);
       position: absolute;
@@ -557,12 +565,12 @@ export function injectStyles() {
       letter-spacing: 1px;
       box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
-    .bh-recommend-mode .boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
-    .bh-recommend-mode .boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
-    .bh-recommend-mode .boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-    .bh-recommend-mode .boss-helper-target.bh-target-strong::before { background: linear-gradient(135deg, #10b981, #059669); }
-    .bh-recommend-mode .boss-helper-target.bh-target-top50::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
-    .bh-recommend-mode .boss-helper-target.bh-target-overseas::before { background: linear-gradient(135deg, #64748b, #475569); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-strong::before { background: linear-gradient(135deg, #10b981, #059669); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-top50::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+    .bh-recommend-mode :is(.candidate-card-wrap, .recommend-card-wrap, .card-item, .candidate-card, .similar-geek-wrap, [class*="geek-card"]).boss-helper-target.bh-target-overseas::before { background: linear-gradient(135deg, #64748b, #475569); }
 
     .bh-chat-mode .boss-helper-target {
       --bh-chat-accent: #10b981;
@@ -597,6 +605,12 @@ export function injectStyles() {
       box-shadow: inset 4px 0 0 var(--bh-chat-accent), 0 8px 18px rgba(15, 23, 42, 0.04);
       background-image: linear-gradient(90deg, var(--bh-chat-glow) 0%, rgba(255, 255, 255, 0) 38%);
     }
+    .bh-chat-mode .boss-helper-target.bh-chat-mode-mismatch > .geek-item {
+      box-shadow: inset 3px 0 0 var(--bh-chat-accent), 0 4px 12px rgba(15, 23, 42, 0.03);
+      background-image:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.14) 42%, rgba(255, 255, 255, 0) 68%),
+        linear-gradient(90deg, var(--bh-chat-glow) 0%, rgba(255, 255, 255, 0) 24%);
+    }
 
     /* 内部备用小标签 */
     .bh-card-label {
@@ -628,6 +642,11 @@ export function injectStyles() {
       letter-spacing: 0.2px;
       box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
       transform: translateY(-1px);
+    }
+    .bh-chat-inline-label.is-mode-mismatch {
+      border-style: dashed !important;
+      box-shadow: none;
+      opacity: 0.84;
     }
     .bh-chat-school-label {
       margin-left: 8px;

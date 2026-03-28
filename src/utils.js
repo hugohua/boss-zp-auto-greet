@@ -212,12 +212,17 @@ export function scrollContainerTo(container, top, behavior = 'smooth') {
     const safeTop = Math.max(0, Number(top) || 0);
 
     if (isDocumentScrollContainer(container)) {
+        const scroller = document.scrollingElement || document.documentElement || document.body;
         if (typeof window.scrollTo === 'function') {
-            window.scrollTo({ top: safeTop, behavior });
-        } else {
-            const scroller = document.scrollingElement || document.documentElement || document.body;
-            if (scroller) scroller.scrollTop = safeTop;
+            if (behavior === 'smooth') {
+                window.scrollTo({ top: safeTop, behavior });
+            } else {
+                window.scrollTo(0, safeTop);
+            }
         }
+        if (scroller) scroller.scrollTop = safeTop;
+        if (document.documentElement) document.documentElement.scrollTop = safeTop;
+        if (document.body) document.body.scrollTop = safeTop;
         window.dispatchEvent(new Event('scroll'));
         return;
     }

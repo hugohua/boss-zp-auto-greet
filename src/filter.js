@@ -12,17 +12,28 @@ const geekDataMap = new Map(); // geekId -> candidateInfo
 let apiInterceptInstalled = false;
 let onCandidatesUpdated = null; // 回调
 let onChatGeekInfoUpdated = null; // 聊天页 geek/info 回调
+let recommendApiLoadSeq = 0; // 推荐列表接口成功解析计数
 
 // ====== 学校缓存 ======
 const SCHOOL_CACHE_KEY = 'boss_helper_school_cache';
 const DOM_FALLBACK_PREFIX = 'dom_fallback_';
+const SCHOOL_CACHE_MAX_UID_ENTRIES = 3000;
+const CHAT_PREFETCH_CONCURRENCY = 2;
+const CHAT_PREFETCH_COOLDOWN_MS = 60 * 1000;
+
+const chatRuntimeMetaMap = new Map(); // uid -> runtime meta
+const chatPrefetchInFlight = new Set();
+const chatPrefetchAttemptAt = new Map();
+const chatPrefetchQueue = [];
+let chatPrefetchActiveCount = 0;
 
 function loadSchoolCache() {
-    return readStorage(SCHOOL_CACHE_KEY, {});
+    const cache = readStorage(SCHOOL_CACHE_KEY, {});
+    return isPlainObject(cache) ? cache : {};
 }
 
 function saveSchoolCache(cache) {
-    writeStorage(SCHOOL_CACHE_KEY, cache);
+    writeStorage(SCHOOL_CACHE_KEY, pruneSchoolCache(cache));
 }
 
 function addToSchoolCache(uid, name, school, schoolLabel, extra = {}) {
@@ -43,6 +54,298 @@ function addToSchoolCache(uid, name, school, schoolLabel, extra = {}) {
     saveSchoolCache(cache);
 }
 
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeSchoolCacheEntry(entry) {
+    if (!isPlainObject(entry)) return null;
+
+    const normalizedTs = Number(entry.ts);
+    return {
+        ...entry,
+        ts: Number.isFinite(normalizedTs) ? normalizedTs : 0,
+    };
+}
+
+function pruneSchoolCache(cache, maxUidEntries = SCHOOL_CACHE_MAX_UID_ENTRIES) {
+    if (!isPlainObject(cache)) return {};
+
+    const uidEntries = Object.entries(cache)
+        .filter(([key]) => !String(key).startsWith('name_'))
+        .map(([uid, entry]) => [String(uid), normalizeSchoolCacheEntry(entry)])
+        .filter(([, entry]) => !!entry)
+        .sort(([, left], [, right]) => (right.ts || 0) - (left.ts || 0))
+        .slice(0, maxUidEntries);
+
+    const nextCache = {};
+    const latestByName = new Map();
+
+    uidEntries.forEach(([uid, entry]) => {
+        nextCache[uid] = entry;
+
+        if (!entry.name) return;
+        const nameKey = `name_${entry.name}`;
+        const current = latestByName.get(nameKey);
+        if (!current || (entry.ts || 0) >= (current.entry.ts || 0)) {
+            latestByName.set(nameKey, { uid, entry });
+        }
+    });
+
+    latestByName.forEach(({ uid, entry }, nameKey) => {
+        nextCache[nameKey] = { uid, ...entry };
+    });
+
+    return nextCache;
+}
+
+function getVueRuntimeHandles(card) {
+    const handles = [];
+    const seen = new Set();
+    let node = card;
+    let depth = 0;
+
+    while (node && depth < 5) {
+        Object.getOwnPropertyNames(node).forEach((key) => {
+            if (!/^(__vue|__vnode|_vnode)/.test(key)) return;
+            const value = node[key];
+            if (!isPlainObject(value) || seen.has(value)) return;
+            seen.add(value);
+            handles.push(value);
+        });
+        node = node.parentNode;
+        depth++;
+    }
+
+    return handles;
+}
+
+function buildChatMetaFromRuntimeObject(source, targetUid) {
+    if (!isPlainObject(source)) return null;
+
+    const candidates = [
+        source,
+        source.geek,
+        source.item,
+        source.friend,
+        source.dataSource,
+        source.personInfo,
+        source.props,
+        source.$props,
+        source._props,
+        source.ctx,
+        source.proxy,
+        source.setupState,
+        source.$data,
+        source.transmit,
+        source.geekCard,
+    ].filter(isPlainObject);
+
+    for (const candidate of candidates) {
+        const geekCard = isPlainObject(candidate.geekCard) ? candidate.geekCard : null;
+        const dataSource = isPlainObject(candidate.dataSource) ? candidate.dataSource : null;
+        const personInfo = isPlainObject(candidate.personInfo) ? candidate.personInfo : null;
+        const transmit = isPlainObject(candidate.transmit) ? candidate.transmit : null;
+
+        const uid = pickValue(
+            candidate.uid,
+            candidate.userId,
+            dataSource?.uid,
+            dataSource?.userId,
+            candidate.user?.uid,
+            geekCard?.uid,
+            geekCard?.userId,
+            personInfo?.uid,
+        );
+        const securityId = pickValue(
+            candidate.securityId,
+            geekCard?.securityId,
+            dataSource?.securityId,
+            personInfo?.securityId,
+            transmit?.securityId,
+        );
+
+        if (String(uid) !== String(targetUid) || !securityId) continue;
+
+        return {
+            uid: String(uid),
+            securityId,
+            geekSource: pickValue(
+                candidate.geekSource,
+                geekCard?.geekSource,
+                dataSource?.geekSource,
+                personInfo?.geekSource,
+                0,
+            ),
+            expectId: pickValue(
+                candidate.expectId,
+                geekCard?.expectId,
+                dataSource?.expectId,
+                personInfo?.expectId,
+            ),
+            encryptGeekId: pickValue(
+                candidate.encryptGeekId,
+                geekCard?.encryptUserId,
+                geekCard?.encryptGeekId,
+                dataSource?.encryptGeekId,
+                personInfo?.encryptGeekId,
+            ),
+            encryptJobId: pickValue(
+                candidate.encryptJobId,
+                geekCard?.encryptJobId,
+                dataSource?.encryptJobId,
+                personInfo?.encryptJobId,
+            ),
+            name: pickValue(
+                candidate.name,
+                candidate.user?.name,
+                geekCard?.name,
+                dataSource?.name,
+                personInfo?.name,
+            ),
+        };
+    }
+
+    return null;
+}
+
+function searchChatMetaInRuntime(root, targetUid, visited = new Set(), depth = 0) {
+    if (!isPlainObject(root) || visited.has(root) || depth > 5) return null;
+    visited.add(root);
+
+    const direct = buildChatMetaFromRuntimeObject(root, targetUid);
+    if (direct) return direct;
+
+    const nextNodes = [];
+    const priorityKeys = [
+        'geek',
+        'item',
+        'friend',
+        'dataSource',
+        'personInfo',
+        'props',
+        '$props',
+        '_props',
+        'ctx',
+        'proxy',
+        'setupState',
+        '$data',
+        'transmit',
+        'geekCard',
+        'list',
+        'friendList',
+        'items',
+        'records',
+        'children',
+        'subTree',
+        'component',
+        'parent',
+    ];
+
+    priorityKeys.forEach((key) => {
+        const value = root[key];
+        if (Array.isArray(value)) {
+            nextNodes.push(...value.slice(0, 60));
+        } else if (isPlainObject(value)) {
+            nextNodes.push(value);
+        }
+    });
+
+    if (Array.isArray(root)) {
+        nextNodes.push(...root.slice(0, 60));
+    } else if (depth < 2) {
+        Object.values(root).slice(0, 25).forEach((value) => {
+            if (Array.isArray(value)) {
+                nextNodes.push(...value.slice(0, 40));
+            } else if (isPlainObject(value)) {
+                nextNodes.push(value);
+            }
+        });
+    }
+
+    for (const next of nextNodes) {
+        const result = searchChatMetaInRuntime(next, targetUid, visited, depth + 1);
+        if (result) return result;
+    }
+
+    return null;
+}
+
+function extractChatCardRuntimeMeta(card, uid) {
+    if (!uid) return null;
+
+    const cached = chatRuntimeMetaMap.get(String(uid));
+    if (cached?.securityId) return cached;
+
+    const handles = getVueRuntimeHandles(card);
+    for (const handle of handles) {
+        const meta = searchChatMetaInRuntime(handle, uid);
+        if (meta?.securityId) {
+            chatRuntimeMetaMap.set(String(uid), meta);
+            return meta;
+        }
+    }
+
+    return null;
+}
+
+function pumpChatGeekInfoPrefetchQueue() {
+    while (chatPrefetchActiveCount < CHAT_PREFETCH_CONCURRENCY && chatPrefetchQueue.length) {
+        const meta = chatPrefetchQueue.shift();
+        if (!meta?.uid || !meta.securityId) continue;
+        if (chatPrefetchInFlight.has(meta.uid)) continue;
+
+        chatPrefetchActiveCount++;
+        chatPrefetchInFlight.add(meta.uid);
+        chatPrefetchAttemptAt.set(meta.uid, Date.now());
+
+        fetch(`/wapi/zpjob/chat/geek/info?${new URLSearchParams({
+            uid: meta.uid,
+            geekSource: String(meta.geekSource ?? 0),
+            securityId: meta.securityId,
+        }).toString()}`, {
+            credentials: 'include',
+            headers: {
+                accept: 'application/json, text/plain, */*',
+                'x-requested-with': 'XMLHttpRequest',
+            },
+        })
+            .then((response) => response.ok ? response.json() : null)
+            .then((data) => {
+                if (data?.code === 0 && data.zpData) {
+                    parseChatGeekInfo(data.zpData, { prefetch: true });
+                }
+            })
+            .catch((error) => {
+                logger.warn(`[聊天预取] uid=${meta.uid} 详情补拉失败: ${error?.message || error}`);
+            })
+            .finally(() => {
+                chatPrefetchActiveCount = Math.max(0, chatPrefetchActiveCount - 1);
+                chatPrefetchInFlight.delete(meta.uid);
+                pumpChatGeekInfoPrefetchQueue();
+            });
+    }
+}
+
+function scheduleChatGeekInfoPrefetch(card, uid) {
+    const uidKey = String(uid || '');
+    if (!uidKey) return;
+
+    const cache = loadSchoolCache();
+    if (cache[uidKey]?.schoolLabel) return;
+    if (chatPrefetchInFlight.has(uidKey)) return;
+
+    const lastAttemptAt = chatPrefetchAttemptAt.get(uidKey) || 0;
+    if (Date.now() - lastAttemptAt < CHAT_PREFETCH_COOLDOWN_MS) return;
+
+    const meta = extractChatCardRuntimeMeta(card, uidKey);
+    if (!meta?.securityId) return;
+
+    chatRuntimeMetaMap.set(uidKey, meta);
+    chatPrefetchQueue.push(meta);
+    pumpChatGeekInfoPrefetchQueue();
+}
+
 // ====== 公开 API ======
 
 export function setOnCandidatesUpdated(cb) {
@@ -55,6 +358,10 @@ export function setOnChatGeekInfoUpdated(cb) {
 
 export function getGeekDataMap() {
     return geekDataMap;
+}
+
+export function getRecommendApiLoadSeq() {
+    return recommendApiLoadSeq;
 }
 
 /**
@@ -364,11 +671,15 @@ function mergeCandidateInfo(existing, incoming) {
 function applyCandidateMatch(candidate, config = getConfig()) {
     const schoolMatch = matchSchool(candidate.school, config);
     const is27FreshGraduate = is27FreshGraduateCandidate(candidate);
-    const matchesRecruitMode = config.freshGraduateMode ? is27FreshGraduate : !is27FreshGraduate;
+    const matchesRecruitMode = isRecruitModeMatch(is27FreshGraduate, config);
     candidate.is27FreshGraduate = is27FreshGraduate;
     candidate.isTarget = !!schoolMatch && matchesRecruitMode;
     candidate.schoolLabel = schoolMatch ? schoolMatch.label : '';
     return candidate;
+}
+
+function isRecruitModeMatch(is27FreshGraduate, config = getConfig()) {
+    return config.freshGraduateMode ? !!is27FreshGraduate : !is27FreshGraduate;
 }
 
 function getSchoolLabelClass(label = '') {
@@ -463,11 +774,12 @@ function clearAllRecommendHighlights() {
 }
 
 function clearChatCardHighlight(card) {
-    card.classList.remove('boss-helper-target');
+    card.classList.remove('boss-helper-target', 'bh-chat-mode-mismatch');
     Array.from(card.classList)
         .filter((className) => className.startsWith('bh-target-'))
         .forEach((className) => card.classList.remove(className));
     card.removeAttribute('data-school-label');
+    card.removeAttribute('data-bh-chat-mode');
     card.querySelectorAll('.bh-card-label').forEach((label) => label.remove());
 }
 
@@ -481,11 +793,13 @@ function hasChatCardHighlight(card) {
         !!getChatCardLabel(card);
 }
 
-function syncChatCardHighlight(card, nameEl, schoolLabel) {
+function syncChatCardHighlight(card, nameEl, schoolLabel, options = {}) {
+    const { modeMismatch = false } = options;
     const labelClass = getSchoolLabelClass(schoolLabel);
     const targetClass = `bh-target-${labelClass}`;
 
     card.classList.add('boss-helper-target');
+    card.classList.toggle('bh-chat-mode-mismatch', modeMismatch);
     Array.from(card.classList)
         .filter((className) => className.startsWith('bh-target-') && className !== targetClass)
         .forEach((className) => card.classList.remove(className));
@@ -494,6 +808,10 @@ function syncChatCardHighlight(card, nameEl, schoolLabel) {
     if (card.getAttribute('data-school-label') !== schoolLabel) {
         card.setAttribute('data-school-label', schoolLabel);
     }
+    const nextChatMode = modeMismatch ? 'mismatch' : 'match';
+    if (card.getAttribute('data-bh-chat-mode') !== nextChatMode) {
+        card.setAttribute('data-bh-chat-mode', nextChatMode);
+    }
 
     const existingLabel = getChatCardLabel(card);
     if (!nameEl || !nameEl.parentNode) {
@@ -501,7 +819,10 @@ function syncChatCardHighlight(card, nameEl, schoolLabel) {
         return;
     }
 
-    const desiredClassName = `bh-card-label bh-chat-inline-label ${labelClass}`;
+    const desiredClassName = `bh-card-label bh-chat-inline-label ${labelClass}${modeMismatch ? ' is-mode-mismatch' : ''}`;
+    const desiredTitle = modeMismatch
+        ? `${schoolLabel}：目标院校，但与当前招聘模式不匹配`
+        : `${schoolLabel}：目标院校`;
     const parent = nameEl.parentNode;
     const insertRef = nameEl.nextSibling;
     const label = existingLabel || document.createElement('span');
@@ -510,6 +831,7 @@ function syncChatCardHighlight(card, nameEl, schoolLabel) {
         label.setAttribute('data-bh-chat-label', '1');
         label.textContent = schoolLabel;
         label.className = desiredClassName;
+        label.title = desiredTitle;
         parent.insertBefore(label, insertRef);
         return;
     }
@@ -522,6 +844,9 @@ function syncChatCardHighlight(card, nameEl, schoolLabel) {
     }
     if (label.textContent !== schoolLabel) {
         label.textContent = schoolLabel;
+    }
+    if (label.title !== desiredTitle) {
+        label.title = desiredTitle;
     }
     if (label.parentNode !== parent || label.previousElementSibling !== nameEl) {
         parent.insertBefore(label, insertRef);
@@ -554,7 +879,7 @@ function parseApiCandidates(zpData) {
         }
 
         // 将目标院校候选人写入持久化缓存（供聊天页使用）
-        if (info.isTarget && info.uid) {
+        if (info.schoolLabel && info.uid) {
             addToSchoolCache(info.uid, info.name, info.school, info.schoolLabel, {
                 experience: info.experience,
                 graduateYear: info.graduateYear,
@@ -564,6 +889,7 @@ function parseApiCandidates(zpData) {
         }
     }
 
+    recommendApiLoadSeq += 1;
     logger.info(`API 解析: 获取 ${list.length} 名候选人，目标院校 ${targetCount} 名`);
     if (onCandidatesUpdated) onCandidatesUpdated(geekDataMap);
 }
@@ -571,7 +897,8 @@ function parseApiCandidates(zpData) {
 /**
  * 解析聊天页 geek/info 接口响应，提取学校数据并缓存
  */
-function parseChatGeekInfo(zpData) {
+function parseChatGeekInfo(zpData, options = {}) {
+    const { prefetch = false } = options;
     const data = zpData.data;
     if (!data || !data.uid) return;
 
@@ -635,15 +962,18 @@ function parseChatGeekInfo(zpData) {
     const schoolMatch = matchSchool(school, config);
     info.schoolMatch = schoolMatch;
     info.is27FreshGraduate = is27FreshGraduateCandidate(info);
+    info.prefetch = prefetch;
 
-    if (schoolMatch && (config.freshGraduateMode ? info.is27FreshGraduate : !info.is27FreshGraduate)) {
+    if (schoolMatch) {
         addToSchoolCache(info.uid, info.name, school, schoolMatch.label, {
             experience: info.experience,
             graduateYear: info.graduateYear,
             freshGraduate: info.freshGraduate,
             is27FreshGraduate: info.is27FreshGraduate,
         });
-        logger.info(`聊天 geek/info: ${info.name || info.uid} → ${school} [${schoolMatch.label}]`);
+        if (!prefetch) {
+            logger.info(`聊天 geek/info: ${info.name || info.uid} → ${school} [${schoolMatch.label}]`);
+        }
     }
 
     // 触发右侧面板高亮和左侧列表刷新
@@ -879,6 +1209,7 @@ export function filterChatListByDOM() {
     let cacheHitCount = 0;
     let disabledCount = 0;
     let modeMismatchCount = 0;
+    let matchedCount = 0;
 
     cards.forEach((card) => {
         // 从 data-id 提取 uid（格式为 "uid-jobSource"）
@@ -897,6 +1228,7 @@ export function filterChatListByDOM() {
         }
 
         if (!cached || !cached.schoolLabel) {
+            scheduleChatGeekInfoPrefetch(card, uid);
             if (hasChatCardHighlight(card)) {
                 clearChatCardHighlight(card);
             }
@@ -914,7 +1246,7 @@ export function filterChatListByDOM() {
             return;
         }
 
-        if (config.freshGraduateMode ? !cached.is27FreshGraduate : cached.is27FreshGraduate) {
+        if (!isRecruitModeMatch(cached.is27FreshGraduate, config)) {
             modeMismatchCount++;
             if (hasChatCardHighlight(card)) {
                 clearChatCardHighlight(card);
@@ -922,11 +1254,12 @@ export function filterChatListByDOM() {
             return;
         }
 
+        matchedCount++;
         syncChatCardHighlight(card, nameEl, cached.schoolLabel);
         targetCount++;
     });
 
-    logger.info(`[聊天高亮] 扫描完成: ${cards.length} 张卡片，缓存命中 ${cacheHitCount} 张，已高亮 ${targetCount} 张，标签关闭 ${disabledCount} 张，招聘模式不匹配 ${modeMismatchCount} 张，缓存条目 ${cacheKeys.length}`);
+    logger.info(`[聊天高亮] 扫描完成: ${cards.length} 张卡片，缓存命中 ${cacheHitCount} 张，目标院校 ${targetCount} 张，匹配模式 ${matchedCount} 张，招聘模式不匹配 ${modeMismatchCount} 张，标签关闭 ${disabledCount} 张，缓存条目 ${cacheKeys.length}`);
     return targetCount;
 }
 
@@ -939,7 +1272,10 @@ export function highlightConversationPanel(info) {
     if (!info || !info.schoolMatch) return;
 
     const config = getConfig();
-    const matchesRecruitMode = config.freshGraduateMode ? !!info.is27FreshGraduate : !info.is27FreshGraduate;
+    if (!isRecruitModeMatch(info.is27FreshGraduate, config)) {
+        filterChatListByDOM();
+        return;
+    }
 
     let retries = 0;
 
@@ -1003,7 +1339,7 @@ export function highlightConversationPanel(info) {
 
         if (summaryContainer) {
             const summaryRow = document.createElement('div');
-            summaryRow.className = `bh-chat-target-summary ${labelClass}${matchesRecruitMode ? '' : ' is-mode-mismatch'}`;
+            summaryRow.className = `bh-chat-target-summary ${labelClass}`;
 
             const summaryHead = document.createElement('div');
             summaryHead.className = 'bh-chat-target-summary-head';
@@ -1033,9 +1369,7 @@ export function highlightConversationPanel(info) {
 
             const summaryMeta = document.createElement('div');
             summaryMeta.className = 'bh-chat-target-summary-meta';
-            summaryMeta.textContent = matchesRecruitMode
-                ? metaParts.join(' · ')
-                : `${metaParts.join(' · ')}${metaParts.length ? ' · ' : ''}与当前招聘模式不匹配`;
+            summaryMeta.textContent = metaParts.join(' · ');
 
             summaryRow.appendChild(summaryHead);
             if (summaryMeta.textContent) {
@@ -1044,7 +1378,7 @@ export function highlightConversationPanel(info) {
             summaryContainer.appendChild(summaryRow);
         }
 
-        logger.info(`聊天窗高亮: ${info.name} → ${info.school} [${info.schoolMatch.label}]${matchesRecruitMode ? '' : '（招聘模式不匹配）'}`);
+        logger.info(`聊天窗高亮: ${info.name} → ${info.school} [${info.schoolMatch.label}]`);
     };
 
     tryInject();

@@ -453,6 +453,70 @@ describe('filter.js', () => {
             expect(info.is27FreshGraduate).toBe(true);
             expect(info.schoolMatch.label).toBe('强相关');
         });
+
+        it('学校缓存超过 uid 上限时应淘汰最旧条目并同步清理名字索引', () => {
+            mockConfig = {
+                ...mockConfig,
+                enabledSchoolLabels: ['强相关', 'C9', '985', '211'],
+                targetSchools: [
+                    { name: '杭州电子科技大学', label: '强相关' },
+                    ...mockConfig.targetSchools,
+                ],
+            };
+
+            const seededCache = {};
+            for (let i = 1; i <= 3000; i++) {
+                const entry = {
+                    name: `候选人${i}`,
+                    school: '历史院校',
+                    schoolLabel: '985',
+                    experience: '',
+                    graduateYear: '',
+                    freshGraduate: '',
+                    is27FreshGraduate: false,
+                    ts: i,
+                };
+                seededCache[String(i)] = entry;
+                seededCache[`name_候选人${i}`] = { uid: String(i), ...entry };
+            }
+            mockStorage.boss_helper_school_cache = seededCache;
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', '/wapi/zpjob/chat/geek/info?uid=4001');
+            xhr.responseText = JSON.stringify({
+                code: 0,
+                zpData: {
+                    data: {
+                        uid: 4001,
+                        name: '新候选人',
+                        school: '杭州电子科技大学',
+                        major: '计算数学',
+                        edu: '硕士',
+                        year: '27年应届生',
+                        eduExpList: [
+                            {
+                                timeDesc: '2024-2027',
+                                school: '杭州电子科技大学',
+                                major: '计算数学',
+                                degree: '硕士',
+                            },
+                        ],
+                    },
+                },
+            });
+
+            xhr.send();
+
+            const cache = mockStorage.boss_helper_school_cache;
+            const uidKeys = Object.keys(cache).filter((key) => !key.startsWith('name_'));
+
+            expect(uidKeys).toHaveLength(3000);
+            expect(cache['1']).toBeUndefined();
+            expect(cache['name_候选人1']).toBeUndefined();
+            expect(cache['4001']).toBeDefined();
+            expect(cache['name_新候选人']).toBeDefined();
+            expect(cache['name_新候选人'].uid).toBe('4001');
+        });
     });
 
     describe('filterByDOM', () => {
@@ -747,7 +811,7 @@ describe('filter.js', () => {
             expect(labels[0]).toBe(firstLabel);
         });
 
-        it('招聘模式不匹配时应只输出汇总日志，不再逐卡刷屏', () => {
+        it('招聘模式不匹配时应跳过聊天列表高亮，并且只输出汇总日志', () => {
             mockStorage.boss_helper_school_cache = {
                 '604704359': {
                     name: '杜康磊',
@@ -785,9 +849,145 @@ describe('filter.js', () => {
 
             expect(filterChatListByDOM()).toBe(0);
 
+            const cards = document.querySelectorAll('.geek-item-wrap');
+            const labels = document.querySelectorAll('.bh-card-label[data-bh-chat-label="1"]');
+            expect(cards[0].classList.contains('boss-helper-target')).toBe(false);
+            expect(cards[0].classList.contains('bh-chat-mode-mismatch')).toBe(false);
+            expect(cards[1].classList.contains('bh-chat-mode-mismatch')).toBe(false);
+            expect(labels).toHaveLength(0);
+
             const messages = logger.info.mock.calls.map((args) => args.join(' '));
             expect(messages.some((message) => message.includes('与当前招聘模式不匹配，跳过'))).toBe(false);
             expect(messages.some((message) => message.includes('招聘模式不匹配 2 张'))).toBe(true);
+        });
+
+        it('目标院校但招聘模式不匹配时，应清理左侧列表已有高亮提示', () => {
+            mockStorage.boss_helper_school_cache = {
+                '750561054': {
+                    name: '舒文浩',
+                    school: '东北大学',
+                    schoolLabel: '985',
+                    is27FreshGraduate: false,
+                },
+            };
+
+            mockConfig = {
+                ...mockConfig,
+                targetSchools: [
+                    ...mockConfig.targetSchools,
+                    { name: '东北大学', label: '985' },
+                ],
+                freshGraduateMode: true,
+            };
+
+            document.body.innerHTML = `
+                <div class="user-list">
+                    <div class="geek-item-wrap boss-helper-target bh-target-n985 bh-chat-mode-mismatch" data-school-label="985" data-bh-chat-mode="mismatch">
+                        <div class="geek-item" data-id="750561054-0">
+                            <div class="title">
+                                <span class="geek-item-top">
+                                    <span class="geek-name">舒文浩</span>
+                                    <span class="bh-card-label bh-chat-inline-label n985 is-mode-mismatch" data-bh-chat-label="1" title="985：目标院校，但与当前招聘模式不匹配">985</span>
+                                    <span class="source-job">27届实习生（软件/前端/AI/Agent等方向）</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            expect(filterChatListByDOM()).toBe(0);
+
+            const card = document.querySelector('.geek-item-wrap');
+            const label = document.querySelector('.bh-card-label[data-bh-chat-label="1"]');
+
+            expect(card.classList.contains('boss-helper-target')).toBe(false);
+            expect(card.classList.contains('bh-target-n985')).toBe(false);
+            expect(card.classList.contains('bh-chat-mode-mismatch')).toBe(false);
+            expect(card.getAttribute('data-bh-chat-mode')).toBeNull();
+            expect(card.getAttribute('data-school-label')).toBeNull();
+            expect(label).toBeNull();
+        });
+
+        it('未点击的聊天卡片应可通过运行时数据静默补拉详情并补上高亮', async () => {
+            const originalFetch = global.fetch;
+            global.fetch = vi.fn(() => Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    code: 0,
+                    zpData: {
+                        data: {
+                            uid: 604704359,
+                            name: '杜康磊',
+                            school: '清华大学',
+                            major: '计算机科学与技术',
+                            edu: '硕士',
+                            year: '27年应届生',
+                            eduExpList: [
+                                {
+                                    timeDesc: '2024-2027',
+                                    school: '清华大学',
+                                    major: '计算机科学与技术',
+                                    degree: '硕士',
+                                },
+                            ],
+                        },
+                    },
+                }),
+            }));
+
+            try {
+                mockConfig = {
+                    ...mockConfig,
+                    freshGraduateMode: true,
+                };
+
+                document.body.innerHTML = `
+                    <div class="user-list">
+                        <div class="geek-item-wrap">
+                            <div class="geek-item" data-id="604704359-0">
+                                <div class="title">
+                                    <span class="geek-item-top">
+                                        <span class="geek-name">杜康磊</span>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const card = document.querySelector('.geek-item-wrap');
+                Object.defineProperty(card, '__vueParentComponent', {
+                    configurable: true,
+                    value: {
+                        props: {
+                            item: {
+                                uid: '604704359',
+                                securityId: 'sec-prefetch-1',
+                                geekSource: 0,
+                                name: '杜康磊',
+                            },
+                        },
+                    },
+                });
+
+                expect(filterChatListByDOM()).toBe(0);
+
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+                expect(String(global.fetch.mock.calls[0][0])).toContain('uid=604704359');
+                expect(String(global.fetch.mock.calls[0][0])).toContain('securityId=sec-prefetch-1');
+                expect(mockStorage.boss_helper_school_cache['604704359'].school).toBe('清华大学');
+
+                expect(filterChatListByDOM()).toBe(1);
+                expect(document.querySelector('.geek-item-wrap').classList.contains('boss-helper-target')).toBe(true);
+            } finally {
+                global.fetch = originalFetch;
+            }
         });
 
         it('应在会话详情区渲染目标院校信息条', () => {
@@ -849,6 +1049,59 @@ describe('filter.js', () => {
             expect(summary.textContent).toContain('杭州电子科技大学');
             expect(summary.textContent).toContain('27年应届生');
             expect(summary.textContent).not.toContain('与当前招聘模式不匹配');
+        });
+
+        it('招聘模式不匹配时，不应在会话详情区渲染目标院校信息条', () => {
+            mockConfig = {
+                ...mockConfig,
+                enabledSchoolLabels: ['强相关', 'C9', '985', '211'],
+                targetSchools: [
+                    { name: '杭州电子科技大学', label: '强相关' },
+                    ...mockConfig.targetSchools,
+                ],
+                freshGraduateMode: false,
+            };
+
+            document.body.innerHTML = `
+                <div class="chat-conversation">
+                    <div class="conversation-main">
+                        <div class="base-info-single-top-detail">
+                            <div class="base-info-item name-contet">
+                                <span class="base-name">
+                                    <span class="name-container">
+                                        <span class="name-box">汪博特</span>
+                                    </span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="base-info-single-main slide-content">
+                            <div class="content">
+                                <div class="position-content">
+                                    <div class="position-item expect">
+                                        <span class="label">期望：</span>
+                                        <span class="value job">杭州 · 数据开发</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            highlightConversationPanel({
+                name: '汪博特',
+                school: '杭州电子科技大学',
+                major: '计算数学',
+                degree: '硕士',
+                experience: '27年应届生',
+                positionStatus: '在校-月内到岗',
+                graduateYear: 2027,
+                is27FreshGraduate: true,
+                schoolMatch: { name: '杭州电子科技大学', label: '强相关' },
+            });
+
+            expect(document.querySelector('.bh-chat-school-label')).toBeNull();
+            expect(document.querySelector('.bh-chat-target-summary')).toBeNull();
         });
     });
 });

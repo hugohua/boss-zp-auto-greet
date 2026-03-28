@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../src/config.js', () => ({
     getConfig: vi.fn(() => ({
         autoLoadMore: true,
+        runInBackground: true,
         greetingTemplates: ['你好，期待与你沟通'],
     })),
     incrementCount: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../src/anti-detect.js', () => ({
 
 vi.mock('../src/filter.js', () => ({
     getUngreetedTargets: vi.fn(() => []),
+    getRecommendApiLoadSeq: vi.fn(() => 0),
     markGreeted: vi.fn(),
     filterByDOM: vi.fn(),
 }));
@@ -89,6 +91,63 @@ function installDocumentScrollMetrics({ innerHeight = 900, scrollHeight = 2400 }
     });
 }
 
+function installWindowScrollMetrics({ innerHeight = 900, scrollHeight = 2400, scrollTop = 0 } = {}) {
+    let currentTop = scrollTop;
+    let currentHeight = scrollHeight;
+
+    Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: innerHeight,
+    });
+    Object.defineProperty(window, 'scrollY', {
+        configurable: true,
+        get: () => currentTop,
+    });
+    Object.defineProperty(document.body, 'scrollHeight', {
+        configurable: true,
+        get: () => currentHeight,
+    });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+        configurable: true,
+        get: () => currentHeight,
+    });
+    Object.defineProperty(document.body, 'scrollTop', {
+        configurable: true,
+        get: () => currentTop,
+        set: (value) => {
+            currentTop = value;
+        },
+    });
+    Object.defineProperty(document.documentElement, 'scrollTop', {
+        configurable: true,
+        get: () => currentTop,
+        set: (value) => {
+            currentTop = value;
+        },
+    });
+
+    const scrollToMock = vi.spyOn(window, 'scrollTo').mockImplementation((arg1, arg2) => {
+        if (typeof arg1 === 'object' && arg1 !== null) {
+            currentTop = Number(arg1.top) || 0;
+            return;
+        }
+        currentTop = Number(arg2) || 0;
+    });
+
+    return {
+        getScrollTop() {
+            return currentTop;
+        },
+        setScrollTop(value) {
+            currentTop = value;
+        },
+        setScrollHeight(value) {
+            currentHeight = value;
+        },
+        scrollToMock,
+    };
+}
+
 describe('greeting.js load-more scrolling', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -102,6 +161,10 @@ describe('greeting.js load-more scrolling', () => {
 
     afterEach(() => {
         vi.runOnlyPendingTimers();
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
         vi.useRealTimers();
         vi.restoreAllMocks();
         vi.resetModules();
@@ -193,6 +256,63 @@ describe('greeting.js load-more scrolling', () => {
         await expect(resultPromise).resolves.toBe(true);
         expect(lastCard.scrollIntoView).toHaveBeenCalled();
         expect(windowScrollSpy).toHaveBeenCalled();
+    });
+
+    it('should bounce from the page bottom to retrigger loading when already at the end', async () => {
+        const { scrollToLoadMore } = await import('../src/greeting.js');
+        const listBody = document.querySelector('.list-body');
+        const cardList = document.querySelector('.card-list');
+        const cards = document.querySelectorAll('.candidate-card-wrap');
+        const lastCard = cards[cards.length - 1];
+
+        Object.defineProperty(listBody, 'clientHeight', {
+            configurable: true,
+            value: 600,
+        });
+        Object.defineProperty(listBody, 'scrollHeight', {
+            configurable: true,
+            value: 600,
+        });
+
+        lastCard.scrollIntoView = vi.fn();
+
+        const pageMetrics = installWindowScrollMetrics({
+            innerHeight: 900,
+            scrollHeight: 2400,
+            scrollTop: 1500,
+        });
+
+        let retreated = false;
+        pageMetrics.scrollToMock.mockImplementation((arg1, arg2) => {
+            const nextTop = typeof arg1 === 'object' && arg1 !== null
+                ? Number(arg1.top) || 0
+                : Number(arg2) || 0;
+
+            if (nextTop < pageMetrics.getScrollTop()) {
+                retreated = true;
+            }
+
+            pageMetrics.setScrollTop(nextTop);
+
+            if (retreated && nextTop >= 1500) {
+                retreated = false;
+                setTimeout(() => {
+                    const item = document.createElement('li');
+                    item.className = 'card-item';
+                    item.innerHTML = '<div class="candidate-card-wrap"><span class="name">候选人4</span></div>';
+                    cardList.appendChild(item);
+                    pageMetrics.setScrollHeight(3000);
+                }, 300);
+            }
+        });
+
+        const resultPromise = scrollToLoadMore();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(15000);
+
+        await expect(resultPromise).resolves.toBe(true);
+        expect(lastCard.scrollIntoView).toHaveBeenCalled();
+        expect(pageMetrics.scrollToMock).toHaveBeenCalled();
     });
 
     it('should keep loading next pages instead of stopping after the first empty page', async () => {
@@ -295,6 +415,61 @@ describe('greeting.js load-more scrolling', () => {
         expect(onClick).toHaveBeenCalledTimes(1);
         expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
     });
+
+    it('should keep running in background when load-more attempts are throttled', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: true,
+            runInBackground: true,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+        filterModule.getUngreetedTargets.mockReturnValue([]);
+        filterModule.getRecommendApiLoadSeq.mockReturnValue(0);
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: true,
+        });
+
+        const listBody = document.querySelector('.list-body');
+        Object.defineProperty(listBody, 'clientHeight', {
+            configurable: true,
+            value: 600,
+        });
+        Object.defineProperty(listBody, 'scrollHeight', {
+            configurable: true,
+            value: 600,
+        });
+
+        installWindowScrollMetrics({
+            innerHeight: 900,
+            scrollHeight: 2400,
+            scrollTop: 1500,
+        });
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(70000);
+
+        expect(greetingModule.isGreetingRunning()).toBe(true);
+
+        greetingModule.stopAutoGreeting();
+        await vi.advanceTimersByTimeAsync(5000);
+        await resultPromise;
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
+    }, 15000);
 
     it('should wait briefly for a delayed greet button before failing', async () => {
         const greetingModule = await import('../src/greeting.js');

@@ -116,4 +116,28 @@ describe('panel.js', () => {
         expect(configModule.updateConfig).toHaveBeenCalledWith({ freshGraduateMode: true });
         expect(filterModule.filterByDOM).toHaveBeenCalledTimes(1);
     });
+
+    it('两个帮助提示应复用全局浮层并切换文案', async () => {
+        const panelModule = await import('../src/ui/panel.js');
+
+        panelModule.createPanel();
+
+        const helpTips = document.querySelectorAll('.bh-help-tip');
+        expect(helpTips).toHaveLength(2);
+
+        helpTips[0].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+
+        const tooltip = document.getElementById('bh-help-tooltip-layer');
+        expect(tooltip).not.toBeNull();
+        expect(tooltip.classList.contains('visible')).toBe(true);
+        expect(tooltip.textContent).toContain('开启时只高亮 27年应届生');
+
+        helpTips[1].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+
+        expect(document.querySelectorAll('#bh-help-tooltip-layer')).toHaveLength(1);
+        expect(tooltip.textContent).toContain('每行一所学校');
+
+        helpTips[1].dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+        expect(tooltip.classList.contains('visible')).toBe(false);
+    });
 });

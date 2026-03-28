@@ -12,14 +12,15 @@ import { showNotification } from './notification.js';
 import { showRecordsModal } from './records.js';
 
 let statsRefreshTimer = null;
+let activeHelpTip = null;
 
 // ====== 面板 HTML ======
 
 function buildHelpTip(text) {
+  const encodedText = encodeURIComponent(text);
   return `
-    <span class="bh-help-tip" tabindex="0">
+    <span class="bh-help-tip" tabindex="0" role="button" aria-label="查看说明" data-help-text="${encodedText}">
       <span class="bh-help-icon">?</span>
-      <span class="bh-help-bubble">${text}</span>
     </span>
   `;
 }
@@ -188,6 +189,7 @@ export function createPanel() {
 
   // 绑定事件
   bindEvents(panel, restoreBtn);
+  setupHelpTips(panel);
   renderGreetingList();
   renderLabelBadges();
   setupLogUpdater();
@@ -281,6 +283,149 @@ function bindEvents(panel, restoreBtn) {
         }
       }
     });
+  }
+}
+
+function ensureHelpTooltip() {
+  let tooltip = document.getElementById('bh-help-tooltip-layer');
+  if (tooltip) return tooltip;
+
+  tooltip = document.createElement('div');
+  tooltip.id = 'bh-help-tooltip-layer';
+  tooltip.className = 'bh-help-tooltip-layer';
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(tooltip);
+  return tooltip;
+}
+
+function readHelpTipText(helpTip) {
+  const encodedText = helpTip?.getAttribute('data-help-text') || '';
+  try {
+    return decodeURIComponent(encodedText);
+  } catch (e) {
+    return encodedText;
+  }
+}
+
+function positionHelpTooltip(helpTip, tooltip) {
+  const anchorRect = helpTip.getBoundingClientRect();
+  const margin = 12;
+  const maxWidth = Math.max(180, Math.min(280, window.innerWidth - margin * 2));
+
+  tooltip.style.maxWidth = `${maxWidth}px`;
+  tooltip.style.left = '0px';
+  tooltip.style.top = '0px';
+
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const bubbleWidth = tooltipRect.width || maxWidth;
+  const bubbleHeight = tooltipRect.height || 0;
+
+  let left = anchorRect.left + (anchorRect.width / 2) - (bubbleWidth / 2);
+  left = Math.max(margin, Math.min(left, window.innerWidth - bubbleWidth - margin));
+
+  let top = anchorRect.top - bubbleHeight - 10;
+  const shouldPlaceBelow = top < margin;
+  if (shouldPlaceBelow) {
+    top = anchorRect.bottom + 10;
+  }
+
+  tooltip.classList.toggle('below', shouldPlaceBelow);
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showHelpTooltip(helpTip) {
+  const text = readHelpTipText(helpTip);
+  if (!text) return;
+
+  const tooltip = ensureHelpTooltip();
+
+  if (activeHelpTip && activeHelpTip !== helpTip) {
+    activeHelpTip.classList.remove('is-active');
+  }
+
+  activeHelpTip = helpTip;
+  helpTip.classList.add('is-active');
+
+  tooltip.textContent = text;
+  tooltip.classList.remove('visible', 'below');
+  tooltip.setAttribute('aria-hidden', 'false');
+  positionHelpTooltip(helpTip, tooltip);
+  tooltip.classList.add('visible');
+}
+
+function hideHelpTooltip(helpTip = activeHelpTip) {
+  const tooltip = document.getElementById('bh-help-tooltip-layer');
+  if (helpTip) {
+    helpTip.classList.remove('is-active');
+  }
+  activeHelpTip = null;
+
+  if (!tooltip) return;
+  tooltip.classList.remove('visible', 'below');
+  tooltip.setAttribute('aria-hidden', 'true');
+}
+
+function syncActiveHelpTooltipPosition() {
+  if (!activeHelpTip) return;
+
+  const tooltip = ensureHelpTooltip();
+  positionHelpTooltip(activeHelpTip, tooltip);
+}
+
+function setupHelpTips(panel) {
+  ensureHelpTooltip();
+
+  panel.querySelectorAll('.bh-help-tip').forEach((helpTip) => {
+    helpTip.addEventListener('mouseenter', () => {
+      showHelpTooltip(helpTip);
+    });
+
+    helpTip.addEventListener('mouseleave', () => {
+      if (document.activeElement === helpTip) return;
+      hideHelpTooltip(helpTip);
+    });
+
+    helpTip.addEventListener('focus', () => {
+      showHelpTooltip(helpTip);
+    });
+
+    helpTip.addEventListener('blur', () => {
+      hideHelpTooltip(helpTip);
+    });
+
+    helpTip.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      helpTip.focus();
+      showHelpTooltip(helpTip);
+    });
+
+    helpTip.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        hideHelpTooltip(helpTip);
+        helpTip.blur();
+      }
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    const tipTrigger = event.target instanceof Element
+      ? event.target.closest('.bh-help-tip')
+      : null;
+    if (tipTrigger) return;
+    hideHelpTooltip();
+  });
+
+  window.addEventListener('resize', syncActiveHelpTooltipPosition);
+
+  const body = panel.querySelector('#bh-body');
+  if (body) {
+    body.addEventListener('scroll', () => {
+      hideHelpTooltip();
+    }, { passive: true });
   }
 }
 

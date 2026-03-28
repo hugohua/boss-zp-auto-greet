@@ -14,7 +14,7 @@ import {
     simulateScrollToElement, simulateMouseMoveToElement,
     isCircuitBroken,
 } from './anti-detect.js';
-import { getUngreetedTargets, markGreeted, filterByDOM } from './filter.js';
+import { getUngreetedTargets, markGreeted, filterByDOM, getRecommendApiLoadSeq } from './filter.js';
 
 // ====== 状态 ======
 let isRunning = false;
@@ -115,24 +115,37 @@ async function greetingLoop() {
             // 尝试滚动加载更多
             if (config.autoLoadMore) {
                 const nextAttempt = emptyLoadMoreAttempts + 1;
-                logger.info(`尝试加载更多候选人... (${nextAttempt}/${MAX_EMPTY_LOAD_MORE_ATTEMPTS})`);
+                const apiSeqBeforeLoadMore = getRecommendApiLoadSeq();
+                logger.info(`尝试触发更多候选人加载... (${nextAttempt}/${MAX_EMPTY_LOAD_MORE_ATTEMPTS})`);
                 const loadedMore = await scrollToLoadMore();
                 if (shouldStop) break;
 
                 // 主动触发一次基于 DOM 的扫描提取，作为新数据拦截兜底
                 filterByDOM({ notify: false });
 
+                const apiAdvanced = getRecommendApiLoadSeq() > apiSeqBeforeLoadMore;
                 const newTargets = getUngreetedTargets();
                 if (newTargets.length > 0) {
                     emptyLoadMoreAttempts = 0;
-                    logger.info('向下翻页成功，提取到新的待致意卡片');
+                    if (apiAdvanced) {
+                        logger.info('候选人列表接口已返回新一页数据，发现新的待致意卡片');
+                    } else if (loadedMore) {
+                        logger.info('推荐列表已加载到新的候选人内容，发现新的待致意卡片');
+                    } else {
+                        logger.info('重新扫描后发现新的待致意卡片');
+                    }
                     continue;
                 }
 
-                emptyLoadMoreAttempts += 1;
-
-                if (!loadedMore) {
-                    logger.info('滚动后未检测到新增卡片或分页内容');
+                if (apiAdvanced || loadedMore) {
+                    emptyLoadMoreAttempts = 0;
+                    if (apiAdvanced) {
+                        logger.info('候选人列表接口已返回新一页数据，但暂未发现未打招呼的目标候选人');
+                    } else {
+                        logger.info('推荐列表出现了新的候选人内容，但暂未发现未打招呼的目标候选人');
+                    }
+                    await interruptibleSleep(randomInt(800, 1500));
+                    continue;
                 }
 
                 if (hasRecommendListReachedEnd()) {
@@ -140,16 +153,25 @@ async function greetingLoop() {
                     break;
                 }
 
+                if (document.hidden && config.runInBackground) {
+                    logger.info('后台页本次未检测到新的候选人内容，可能被浏览器节流；本次不计入连续失败次数');
+                    await interruptibleSleep(randomInt(4000, 7000));
+                    continue;
+                }
+
+                emptyLoadMoreAttempts += 1;
+                logger.info('本次未检测到新的候选人内容（未触发候选人列表接口或列表未增长）');
+
                 if (emptyLoadMoreAttempts < MAX_EMPTY_LOAD_MORE_ATTEMPTS) {
                     logger.info(
-                        `当前页未发现目标候选人，继续尝试下一页 `
+                        `当前未加载到下一页候选人内容，继续重试 `
                         + `(${emptyLoadMoreAttempts}/${MAX_EMPTY_LOAD_MORE_ATTEMPTS})`,
                     );
                     await interruptibleSleep(randomInt(800, 1500));
                     continue;
                 }
 
-                logger.info(`连续 ${MAX_EMPTY_LOAD_MORE_ATTEMPTS} 次翻页后仍未发现目标候选人，停止当前循环`);
+                logger.info(`连续 ${MAX_EMPTY_LOAD_MORE_ATTEMPTS} 次加载更多尝试均未触发新的候选人内容，停止当前循环`);
                 break;
             }
             break;
@@ -521,6 +543,43 @@ async function waitForRecommendListGrowth(before, container, timeoutMs) {
     return null;
 }
 
+function getLoadMoreScrollBehavior() {
+    return document.hidden ? 'auto' : 'smooth';
+}
+
+async function retryLoadMoreFromListBottom(before, container, metrics, behavior) {
+    const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+    if (maxScrollTop <= 0) return false;
+
+    const retreatDistance = Math.max(Math.floor(metrics.clientHeight * 0.35), 240);
+    const retreatTop = Math.max(0, maxScrollTop - retreatDistance);
+    if (metrics.scrollTop <= retreatTop + 8) return false;
+
+    logger.info(
+        `当前已接近列表底部，尝试回弹后再次触发加载: scrollTop ${metrics.scrollTop} -> ${retreatTop} -> ${maxScrollTop}`,
+    );
+
+    scrollContainerTo(container, retreatTop, behavior);
+    await interruptibleSleep(randomInt(350, 650));
+    if (shouldStop) return false;
+
+    scrollContainerTo(container, maxScrollTop, behavior);
+    await interruptibleSleep(randomInt(700, 1100));
+    if (shouldStop) return false;
+
+    const clickedLoadMore = clickLoadMoreButton();
+    const after = await waitForRecommendListGrowth(before, container, clickedLoadMore ? 1800 : 1200);
+    if (after) {
+        logger.info(
+            `加载更多成功: cards ${before.cardCount} -> ${after.cardCount}, `
+            + `scrollHeight ${before.scrollHeight} -> ${after.scrollHeight}`,
+        );
+        return true;
+    }
+
+    return false;
+}
+
 async function scrollPageToLoadMore() {
     const pageContainer = document.scrollingElement || document.documentElement || document.body;
     const before = getRecommendSnapshot(pageContainer);
@@ -578,12 +637,14 @@ export async function scrollToLoadMore() {
     );
 
     const metrics = getScrollMetrics(container);
+    const scrollBehavior = getLoadMoreScrollBehavior();
     const scrollTargets = [];
+    const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
     const incrementalTarget = Math.min(
-        metrics.scrollHeight,
+        maxScrollTop,
         metrics.scrollTop + Math.max(Math.floor(metrics.clientHeight * 0.9), 420),
     );
-    const bottomTarget = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+    const bottomTarget = maxScrollTop;
 
     if (incrementalTarget > metrics.scrollTop + 8) {
         scrollTargets.push(incrementalTarget);
@@ -609,7 +670,7 @@ export async function scrollToLoadMore() {
     for (const targetTop of scrollTargets) {
         if (shouldStop) return false;
 
-        scrollContainerTo(container, targetTop);
+        scrollContainerTo(container, targetTop, scrollBehavior);
         await interruptibleSleep(randomInt(700, 1100));
         if (shouldStop) return false;
 
@@ -625,8 +686,13 @@ export async function scrollToLoadMore() {
         }
     }
 
+    if (metrics.scrollTop >= maxScrollTop - 8) {
+        const bounced = await retryLoadMoreFromListBottom(before, container, metrics, scrollBehavior);
+        if (bounced) return true;
+    }
+
     if (!scrollTargets.length && metrics.clientHeight > 0) {
-        scrollContainerBy(container, Math.max(Math.floor(metrics.clientHeight * 0.8), 360));
+        scrollContainerBy(container, Math.max(Math.floor(metrics.clientHeight * 0.8), 360), scrollBehavior);
         await interruptibleSleep(randomInt(700, 1100));
         if (shouldStop) return false;
     }
