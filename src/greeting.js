@@ -31,6 +31,7 @@ const RECOMMEND_SCROLL_CONTAINER_SELECTORS = [
     '.recommend-list-wrap',
     '.candidate-body',
 ];
+const GREET_BUTTON_TEXT_PATTERN = /^(打招呼|立即沟通|立即开聊|开聊|聊一聊)$/;
 
 /**
  * 可中断的 sleep：每 500ms 检查一次 shouldStop 标志
@@ -172,7 +173,7 @@ async function greetingLoop() {
             simulateScrollToElement(card);
             await interruptibleSleep(randomInt(500, 1500));
             if (shouldStop) break;
-            const btn = findGreetButton(card);
+            const btn = await waitForGreetButton(card);
             if (btn) {
                 simulateMouseMoveToElement(btn);
                 await interruptibleSleep(randomInt(300, 800));
@@ -232,7 +233,7 @@ async function performGreeting(target, greeting, card) {
     try {
         // 方式1：找到打招呼按钮并点击
         if (card) {
-            const btn = findGreetButton(card);
+            const btn = await waitForGreetButton(card);
             if (btn) {
                 btn.click();
                 await sleep(randomInt(800, 1500));
@@ -330,22 +331,106 @@ function findCardElement(target) {
     return null;
 }
 
+function isAvailableActionElement(el) {
+    if (!el) return false;
+    if (el.disabled) return false;
+    if (el.getAttribute?.('aria-disabled') === 'true') return false;
+    return true;
+}
+
+function getGreetSearchRoots(card) {
+    const roots = [];
+    const visited = new Set();
+
+    const pushRoot = (el) => {
+        if (!el || visited.has(el)) return;
+        visited.add(el);
+        roots.push(el);
+    };
+
+    pushRoot(card);
+    pushRoot(card?.closest?.('.card-item'));
+    pushRoot(card?.closest?.('[class*="card-item"]'));
+    pushRoot(card?.closest?.('.recommend-card-wrap'));
+    pushRoot(card?.closest?.('[class*="recommend-card"]'));
+    pushRoot(card?.closest?.('li'));
+
+    return roots;
+}
+
 function findGreetButton(card) {
     const btnSelectors = [
         'button.btn-greet',
         '.start-chat-btn',
         '.btn-greet',
+        '.btn-startchat',
+        '.btn-chat',
+        '.btn-chat-now',
+        '.op-btn',
+        '.op-btn-chat',
         '.button-chat',
         '[class*="greet"]',
         '[class*="chat-btn"]',
+        '[class*="start-chat"]',
+        '[class*="startchat"]',
         'button[ka*="greet"]',
+        '[ka*="greet"]',
+        '[ka*="chat"]',
     ];
-    for (const sel of btnSelectors) {
-        const btn = card.querySelector(sel);
-        // 不检查 offsetParent，BOSS直聘的按钮在非 hover 状态可能不可见但仍可点击
-        if (btn && !btn.disabled) return btn;
+
+    const searchRoots = getGreetSearchRoots(card);
+    for (const root of searchRoots) {
+        for (const sel of btnSelectors) {
+            const btn = root?.querySelector?.(sel);
+            // 不检查 offsetParent，BOSS直聘的按钮在非 hover 状态可能不可见但仍可点击
+            if (isAvailableActionElement(btn)) return btn;
+        }
+
+        const textCandidates = root?.querySelectorAll?.('button, a, [role="button"]') || [];
+        for (const candidate of textCandidates) {
+            const text = (candidate.textContent || '').replace(/\s+/g, '');
+            if (!text) continue;
+            if (!GREET_BUTTON_TEXT_PATTERN.test(text)) continue;
+            if (!isAvailableActionElement(candidate)) continue;
+            return candidate;
+        }
     }
+
     return null;
+}
+
+function triggerCardHover(card) {
+    const roots = getGreetSearchRoots(card);
+    const hoverTargets = roots.length > 0 ? roots : [card];
+
+    hoverTargets.forEach((target) => {
+        if (!target) return;
+
+        try {
+            target.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+            target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+            simulateMouseMoveToElement(target);
+        } catch (e) {
+            // 忽略 hover 事件失败，继续重试查找
+        }
+    });
+}
+
+async function waitForGreetButton(card, options = {}) {
+    const { attempts = 4, delayMs = 250 } = options;
+    if (!card) return null;
+
+    for (let index = 0; index < attempts; index++) {
+        const btn = findGreetButton(card);
+        if (btn) return btn;
+
+        triggerCardHover(card);
+        if (index < attempts - 1) {
+            await sleep(delayMs);
+        }
+    }
+
+    return findGreetButton(card);
 }
 
 /**

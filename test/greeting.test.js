@@ -92,6 +92,7 @@ function installDocumentScrollMetrics({ innerHeight = 900, scrollHeight = 2400 }
 describe('greeting.js load-more scrolling', () => {
     beforeEach(() => {
         vi.useFakeTimers();
+        vi.clearAllMocks();
         vi.spyOn(Math, 'random').mockReturnValue(0);
         vi.spyOn(console, 'log').mockImplementation(() => {});
         vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -247,4 +248,100 @@ describe('greeting.js load-more scrolling', () => {
         expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
         expect(filterModule.getUngreetedTargets.mock.calls.length).toBeGreaterThanOrEqual(6);
     }, 15000);
+
+    it('should click a greet button rendered on the outer card container', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: false,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+        configModule.isLimitReached.mockImplementation(() => (
+            configModule.incrementCount.mock.calls.length > 0
+                ? { limited: true, reason: 'test-stop' }
+                : { limited: false }
+        ));
+
+        const target = {
+            encryptGeekId: 'encrypt-target',
+            name: '候选人2',
+            school: '清华大学',
+            title: '后端工程师',
+            experience: '27年应届生',
+        };
+
+        filterModule.getUngreetedTargets.mockImplementation(() => [target]);
+
+        const outerCard = document.querySelectorAll('.card-item')[1];
+        const innerCard = outerCard.querySelector('.candidate-card-wrap');
+        innerCard.setAttribute('data-bh-id', 'encrypt-target');
+        outerCard.insertAdjacentHTML('beforeend', '<button class="btn-startchat">打招呼</button>');
+        const greetButton = outerCard.querySelector('.btn-startchat');
+        const onClick = vi.fn();
+        greetButton.addEventListener('click', onClick);
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(5000);
+        await resultPromise;
+
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
+    });
+
+    it('should wait briefly for a delayed greet button before failing', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: false,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+        configModule.isLimitReached.mockImplementation(() => (
+            configModule.incrementCount.mock.calls.length > 0
+                ? { limited: true, reason: 'test-stop' }
+                : { limited: false }
+        ));
+
+        const target = {
+            encryptGeekId: 'encrypt-delay',
+            name: '候选人1',
+            school: '清华大学',
+            title: '前端工程师',
+            experience: '27年应届生',
+        };
+
+        filterModule.getUngreetedTargets.mockImplementation(() => [target]);
+
+        const outerCard = document.querySelectorAll('.card-item')[0];
+        const innerCard = outerCard.querySelector('.candidate-card-wrap');
+        innerCard.setAttribute('data-bh-id', 'encrypt-delay');
+
+        const onClick = vi.fn();
+        setTimeout(() => {
+            outerCard.insertAdjacentHTML('beforeend', '<button class="btn-startchat">打招呼</button>');
+            outerCard.querySelector('.btn-startchat').addEventListener('click', onClick);
+        }, 300);
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(5000);
+        await resultPromise;
+
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
+    });
 });

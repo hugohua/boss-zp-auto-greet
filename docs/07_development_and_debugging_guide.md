@@ -4,7 +4,7 @@
 
 ## 1. 热更新与开发流
 1. 在本地克隆代码后，执行 `npm run dev`。Rollup 会监视 `src/` 下所有文件的变化。
-2. 在 Tampermonkey (油猴插件) 中新建一个本地脚本，引向你机器上的 `dist` 文件：
+2. 在 Tampermonkey 中新建一个本地脚本，引向你机器上的 `dist` 文件：
    ```javascript
    // ==UserScript==
    // @name         BOSS本地开发直连
@@ -12,8 +12,10 @@
    // @require      file:///D:/github/boss/dist/boss-zhipin.user.js
    // ==/UserScript==
    ```
-   > ⚠️ 注意：需在 Chrome 扩展管理界面勾选“允许扩展程序访问文件网址(Allow access to file URLs)”。
+   > ⚠️ 注意：需在 Chrome 扩展管理界面为 Tampermonkey 勾选“允许扩展程序访问文件网址(Allow access to file URLs)”。
 3. 随后在 IDE (如 VSCode) 中编写代码，保存后刷新 BOSS 直聘页面即可看到最新效果。
+
+补充说明：当前项目只有 userscript 这一条运行链路，没有独立的 Chrome 插件内容脚本或后台页。
 
 ## 2. 常见故障点：前端 DOM 结构变化
 由于自动化脚本含有大量的 DOM 查询代码，BOSS 官方一旦调整了网页的 CSS 类名（由于前端混淆等原因），脚本将部分瘫痪。

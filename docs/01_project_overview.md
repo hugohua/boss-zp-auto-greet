@@ -4,6 +4,8 @@
 BOSS直聘自动送简历/打招呼油猴脚本 (**boss-zhipin-auto-greet** v2.0.0)。
 这是一个基于纯原生 JavaScript 开发，使用 Rollup 进行模块化打包的浏览器用户脚本 (UserScript)。主要用于在 BOSS 直聘的推荐候选人列表页面，自动化执行条件筛选、简历匹配和自动发送打招呼信息的任务。
 
+当前仓库只保留 userscript 单链路，不包含独立的 Chrome 插件后台页、弹窗页或内容脚本实现。
+
 ## 2. 目录结构
 ```text
 boss-zp-auto-greet/
@@ -30,6 +32,7 @@ boss-zp-auto-greet/
 - **模块化方案**：使用 ES Modules 组织代码，利用 Rollup 打包为一个符合 Tampermonkey 规范的大体量 IIFE 脚本。
 - **UI 构建**：纯 DOM 操作，基于原生 `document.createElement` 等 API 构建控制面板。通过独立的 `styles.js` 统一管理 CSS，避免污染宿主（BOSS直聘）页面的样式。
 - **状态持久化**：优先使用 `GM_setValue` / `GM_getValue` 保存配置和发送记录，当环境不支持时降级回退到 `localStorage` (`config.js`)。
+- **运行形态**：仅通过 Tampermonkey 加载 `dist/boss-zhipin.user.js`，不存在第二套浏览器扩展通信链路。
 
 ## 4. 开发与构建流程
 项目依赖 Node.js 环境。

@@ -6,10 +6,15 @@ import {
     getGeekDataMap,
     installApiInterceptor,
     filterByDOM,
+    filterChatListByDOM,
+    highlightConversationPanel,
     setOnCandidatesUpdated,
+    setOnChatGeekInfoUpdated,
 } from '../src/filter.js';
+import { logger } from '../src/utils.js';
 
 let mockConfig;
+let mockStorage;
 
 // Mock logger
 vi.mock('../src/utils.js', async (importOriginal) => {
@@ -36,8 +41,10 @@ vi.mock('../src/config.js', () => ({
         }
         return null;
     },
-    readStorage: (key, defaultValue) => defaultValue,
-    writeStorage: vi.fn(),
+    readStorage: (key, defaultValue) => (key in mockStorage ? mockStorage[key] : defaultValue),
+    writeStorage: vi.fn((key, value) => {
+        mockStorage[key] = value;
+    }),
 }));
 
 describe('filter.js', () => {
@@ -75,12 +82,14 @@ describe('filter.js', () => {
     });
 
     beforeEach(() => {
+        mockStorage = {};
         mockConfig = {
             targetSchools: [
                 { name: '清华大学', label: 'C9' },
                 { name: '北京大学', label: 'C9' },
             ],
             enabledSchoolLabels: ['C9', '985', '211'],
+            freshGraduateMode: false,
         };
 
         // 清空内部 geekDataMap
@@ -88,6 +97,10 @@ describe('filter.js', () => {
         map.clear();
         document.body.innerHTML = '';
         setOnCandidatesUpdated(null);
+        setOnChatGeekInfoUpdated(null);
+        logger.info.mockClear();
+        logger.warn.mockClear();
+        logger.error.mockClear();
     });
 
     describe('getTargetCandidates / getUngreetedTargets', () => {
@@ -136,6 +149,67 @@ describe('filter.js', () => {
 
             expect(getTargetCandidates()).toHaveLength(0);
         });
+
+        it('开启应届生模式后只保留 27年应届生', () => {
+            const map = getGeekDataMap();
+            map.set('id1', {
+                geekId: 'id1',
+                name: '张三',
+                school: '清华大学',
+                schoolLabel: 'C9',
+                isTarget: true,
+                experience: '27年应届生',
+                graduateYear: 2027,
+                freshGraduate: 3,
+            });
+            map.set('id2', {
+                geekId: 'id2',
+                name: '李四',
+                school: '北京大学',
+                schoolLabel: 'C9',
+                isTarget: true,
+                experience: '3年',
+                graduateYear: 2024,
+                freshGraduate: 0,
+            });
+
+            mockConfig = {
+                ...mockConfig,
+                freshGraduateMode: true,
+            };
+
+            const targets = getTargetCandidates();
+            expect(targets).toHaveLength(1);
+            expect(targets[0].name).toBe('张三');
+        });
+
+        it('关闭应届生模式后应排除 27年应届生', () => {
+            const map = getGeekDataMap();
+            map.set('id1', {
+                geekId: 'id1',
+                name: '张三',
+                school: '清华大学',
+                schoolLabel: 'C9',
+                isTarget: true,
+                experience: '27年应届生',
+                graduateYear: 2027,
+                freshGraduate: 3,
+            });
+            map.set('id2', {
+                geekId: 'id2',
+                name: '李四',
+                school: '北京大学',
+                schoolLabel: 'C9',
+                isTarget: true,
+                experience: '3年',
+                graduateYear: 2024,
+                freshGraduate: 0,
+            });
+
+            const targets = getTargetCandidates();
+            expect(targets).toHaveLength(1);
+            expect(targets[0].name).toBe('李四');
+        });
     });
 
     describe('markGreeted', () => {
@@ -156,6 +230,11 @@ describe('filter.js', () => {
 
     describe('installApiInterceptor', () => {
         it('应能从 geek/list 的 geekCard 结构中提取候选人信息', () => {
+            mockConfig = {
+                ...mockConfig,
+                freshGraduateMode: true,
+            };
+
             const xhr = new XMLHttpRequest();
             xhr.responseText = JSON.stringify({
                 code: 0,
@@ -168,6 +247,7 @@ describe('filter.js', () => {
                                 geekName: '黄思佳',
                                 geekDegree: '本科',
                                 geekWorkYear: '27年应届生',
+                                freshGraduate: 3,
                                 expectPositionName: '数据开发',
                                 expectLocationName: '杭州',
                                 ageDesc: '21岁',
@@ -195,6 +275,8 @@ describe('filter.js', () => {
                 degree: '本科',
                 title: '数据开发',
                 experience: '27年应届生',
+                graduateYear: 2027,
+                freshGraduate: 3,
                 age: '21岁',
                 city: '杭州',
                 lid: 'lid-1',
@@ -318,6 +400,59 @@ describe('filter.js', () => {
                 schoolLabel: 'C9',
             });
         });
+
+        it('应能从聊天 geek/info 接口提取院校与届别信息', () => {
+            mockConfig = {
+                ...mockConfig,
+                enabledSchoolLabels: ['强相关', 'C9', '985', '211'],
+                targetSchools: [
+                    { name: '杭州电子科技大学', label: '强相关' },
+                    ...mockConfig.targetSchools,
+                ],
+            };
+
+            const onChatInfo = vi.fn();
+            setOnChatGeekInfoUpdated(onChatInfo);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', '/wapi/zpjob/chat/geek/info?uid=123864541');
+            xhr.responseText = JSON.stringify({
+                code: 0,
+                zpData: {
+                    data: {
+                        uid: 123864541,
+                        name: '汪博特',
+                        school: '杭州电子科技大学',
+                        major: '计算数学',
+                        edu: '硕士',
+                        year: '27年应届生',
+                        positionStatus: '在校-月内到岗',
+                        applyStatusDes: '曾任',
+                        eduExpList: [
+                            {
+                                timeDesc: '2024-2027',
+                                school: '杭州电子科技大学',
+                                major: '计算数学',
+                                degree: '硕士',
+                            },
+                        ],
+                    },
+                },
+            });
+
+            xhr.send();
+
+            expect(onChatInfo).toHaveBeenCalledTimes(1);
+            const info = onChatInfo.mock.calls[0][0];
+            expect(info.name).toBe('汪博特');
+            expect(info.school).toBe('杭州电子科技大学');
+            expect(info.major).toBe('计算数学');
+            expect(info.degree).toBe('硕士');
+            expect(info.experience).toBe('27年应届生');
+            expect(info.graduateYear).toBe(2027);
+            expect(info.is27FreshGraduate).toBe(true);
+            expect(info.schoolMatch.label).toBe('强相关');
+        });
     });
 
     describe('filterByDOM', () => {
@@ -436,6 +571,7 @@ describe('filter.js', () => {
                     { name: '杭州电子科技大学', label: '强相关' },
                 ],
                 enabledSchoolLabels: ['强相关'],
+                freshGraduateMode: false,
             };
 
             document.body.innerHTML = `
@@ -460,6 +596,259 @@ describe('filter.js', () => {
             expect(card.getAttribute('data-school-label')).toBe('强相关');
             expect(label.classList.contains('strong')).toBe(true);
             expect(label.textContent).toBe('强相关');
+        });
+
+        it('开启应届生模式后，DOM 里只高亮 27年应届生', () => {
+            mockConfig = {
+                ...mockConfig,
+                freshGraduateMode: true,
+            };
+
+            document.body.innerHTML = `
+                <div class="candidate-card-wrap">
+                    <div class="row name-wrap"><span class="name">张三</span></div>
+                    <div class="timeline-wrap edu-exps">
+                        <div class="join-text-wrap content">
+                            <span>清华大学</span>
+                            <span>计算机</span>
+                            <span>本科</span>
+                        </div>
+                    </div>
+                    <div class="title">27年应届生</div>
+                </div>
+                <div class="candidate-card-wrap">
+                    <div class="row name-wrap"><span class="name">李四</span></div>
+                    <div class="timeline-wrap edu-exps">
+                        <div class="join-text-wrap content">
+                            <span>北京大学</span>
+                            <span>计算机</span>
+                            <span>本科</span>
+                        </div>
+                    </div>
+                    <div class="title">26年应届生</div>
+                </div>
+            `;
+
+            const count = filterByDOM({ notify: false });
+            const cards = document.querySelectorAll('.candidate-card-wrap');
+
+            expect(count).toBe(1);
+            expect(cards[0].classList.contains('boss-helper-target')).toBe(true);
+            expect(cards[1].classList.contains('boss-helper-target')).toBe(false);
+        });
+
+        it('关闭应届生模式后，DOM 里应排除 27年应届生', () => {
+            document.body.innerHTML = `
+                <div class="candidate-card-wrap">
+                    <div class="row name-wrap"><span class="name">张三</span></div>
+                    <div class="timeline-wrap edu-exps">
+                        <div class="join-text-wrap content">
+                            <span>清华大学</span>
+                            <span>计算机</span>
+                            <span>本科</span>
+                        </div>
+                    </div>
+                    <div class="title">27年应届生</div>
+                </div>
+                <div class="candidate-card-wrap">
+                    <div class="row name-wrap"><span class="name">李四</span></div>
+                    <div class="timeline-wrap edu-exps">
+                        <div class="join-text-wrap content">
+                            <span>北京大学</span>
+                            <span>计算机</span>
+                            <span>本科</span>
+                        </div>
+                    </div>
+                    <div class="title">3年</div>
+                </div>
+            `;
+
+            const count = filterByDOM({ notify: false });
+            const cards = document.querySelectorAll('.candidate-card-wrap');
+
+            expect(count).toBe(1);
+            expect(cards[0].classList.contains('boss-helper-target')).toBe(false);
+            expect(cards[1].classList.contains('boss-helper-target')).toBe(true);
+        });
+
+        it('重扫前应清理挂在外层容器上的旧高亮', () => {
+            mockConfig = {
+                ...mockConfig,
+                freshGraduateMode: true,
+            };
+
+            document.body.innerHTML = `
+                <li class="card-item boss-helper-target bh-target-C9" data-school-label="C9">
+                    <div class="candidate-card-wrap">
+                        <div class="row name-wrap">
+                            <span class="name">张三</span>
+                            <span class="bh-card-label C9">C9</span>
+                        </div>
+                        <div class="timeline-wrap edu-exps">
+                            <div class="join-text-wrap content">
+                                <span>清华大学</span>
+                                <span>计算机</span>
+                                <span>本科</span>
+                            </div>
+                        </div>
+                        <div class="title">26年应届生</div>
+                    </div>
+                </li>
+            `;
+
+            const count = filterByDOM({ notify: false });
+            const outerCard = document.querySelector('.card-item');
+            const innerCard = document.querySelector('.candidate-card-wrap');
+
+            expect(count).toBe(0);
+            expect(outerCard.classList.contains('boss-helper-target')).toBe(false);
+            expect(outerCard.getAttribute('data-school-label')).toBeNull();
+            expect(innerCard.classList.contains('boss-helper-target')).toBe(false);
+            expect(document.querySelector('.bh-card-label')).toBeNull();
+        });
+    });
+
+    describe('filterChatListByDOM', () => {
+        it('重复扫描聊天列表时不应重复创建标签节点', () => {
+            mockStorage.boss_helper_school_cache = {
+                '604704359': {
+                    name: '杜康磊',
+                    school: '清华大学',
+                    schoolLabel: 'C9',
+                    is27FreshGraduate: false,
+                },
+            };
+
+            document.body.innerHTML = `
+                <div class="user-list">
+                    <div class="geek-item-wrap">
+                        <div class="geek-item" data-id="604704359-0">
+                            <div class="title">
+                                <span class="geek-item-top">
+                                    <span class="geek-name">杜康磊</span>
+                                    <span class="source-job">Agent开发工程师</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            expect(filterChatListByDOM()).toBe(1);
+
+            const firstLabel = document.querySelector('.bh-card-label[data-bh-chat-label="1"]');
+            expect(firstLabel).not.toBeNull();
+            expect(firstLabel.textContent).toBe('C9');
+
+            expect(filterChatListByDOM()).toBe(1);
+
+            const labels = document.querySelectorAll('.bh-card-label[data-bh-chat-label="1"]');
+            expect(labels).toHaveLength(1);
+            expect(labels[0]).toBe(firstLabel);
+        });
+
+        it('招聘模式不匹配时应只输出汇总日志，不再逐卡刷屏', () => {
+            mockStorage.boss_helper_school_cache = {
+                '604704359': {
+                    name: '杜康磊',
+                    school: '清华大学',
+                    schoolLabel: 'C9',
+                    is27FreshGraduate: true,
+                },
+                '604704360': {
+                    name: '王小明',
+                    school: '北京大学',
+                    schoolLabel: 'C9',
+                    is27FreshGraduate: true,
+                },
+            };
+
+            mockConfig = {
+                ...mockConfig,
+                freshGraduateMode: false,
+            };
+
+            document.body.innerHTML = `
+                <div class="user-list">
+                    <div class="geek-item-wrap">
+                        <div class="geek-item" data-id="604704359-0">
+                            <span class="geek-item-top"><span class="geek-name">杜康磊</span></span>
+                        </div>
+                    </div>
+                    <div class="geek-item-wrap">
+                        <div class="geek-item" data-id="604704360-0">
+                            <span class="geek-item-top"><span class="geek-name">王小明</span></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            expect(filterChatListByDOM()).toBe(0);
+
+            const messages = logger.info.mock.calls.map((args) => args.join(' '));
+            expect(messages.some((message) => message.includes('与当前招聘模式不匹配，跳过'))).toBe(false);
+            expect(messages.some((message) => message.includes('招聘模式不匹配 2 张'))).toBe(true);
+        });
+
+        it('应在会话详情区渲染目标院校信息条', () => {
+            mockConfig = {
+                ...mockConfig,
+                enabledSchoolLabels: ['强相关', 'C9', '985', '211'],
+                targetSchools: [
+                    { name: '杭州电子科技大学', label: '强相关' },
+                    ...mockConfig.targetSchools,
+                ],
+                freshGraduateMode: true,
+            };
+
+            document.body.innerHTML = `
+                <div class="chat-conversation">
+                    <div class="conversation-main">
+                        <div class="base-info-single-top-detail">
+                            <div class="base-info-item name-contet">
+                                <span class="base-name">
+                                    <span class="name-container">
+                                        <span class="name-box">汪博特</span>
+                                    </span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="base-info-single-main slide-content">
+                            <div class="content">
+                                <div class="position-content">
+                                    <div class="position-item expect">
+                                        <span class="label">期望：</span>
+                                        <span class="value job">杭州 · 数据开发</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            highlightConversationPanel({
+                name: '汪博特',
+                school: '杭州电子科技大学',
+                major: '计算数学',
+                degree: '硕士',
+                experience: '27年应届生',
+                positionStatus: '在校-月内到岗',
+                graduateYear: 2027,
+                is27FreshGraduate: true,
+                schoolMatch: { name: '杭州电子科技大学', label: '强相关' },
+            });
+
+            const headerLabel = document.querySelector('.bh-chat-school-label');
+            const summary = document.querySelector('.bh-chat-target-summary');
+
+            expect(headerLabel).not.toBeNull();
+            expect(headerLabel.textContent).toBe('强相关');
+            expect(summary).not.toBeNull();
+            expect(summary.textContent).toContain('目标院校');
+            expect(summary.textContent).toContain('杭州电子科技大学');
+            expect(summary.textContent).toContain('27年应届生');
+            expect(summary.textContent).not.toContain('与当前招聘模式不匹配');
         });
     });
 });

@@ -196,8 +196,8 @@ export function injectStyles() {
 
     /* 操作按钮 */
     .bh-action-group {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }
     .bh-btn {
@@ -212,6 +212,8 @@ export function injectStyles() {
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
+      min-width: 0;
+      white-space: nowrap;
     }
     .bh-primary { background: #0f172a; color: white; }
     .bh-primary:hover { background: #1e293b; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }
@@ -319,6 +321,65 @@ export function injectStyles() {
     .bh-switch-input:checked + .bh-switch-ui { background: #0f172a; }
     .bh-switch-input:checked + .bh-switch-ui::after { transform: translateX(14px); }
     .bh-switch-text { color: #475569; font-weight: 500; }
+    .bh-label-with-help {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .bh-help-tip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      outline: none;
+    }
+    .bh-help-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      transition: all 0.2s;
+    }
+    .bh-help-bubble {
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 8px);
+      transform: translateX(-50%) translateY(4px);
+      width: 220px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.96);
+      color: #f8fafc;
+      font-size: 11px;
+      line-height: 1.5;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: all 0.2s ease;
+      z-index: 3;
+      white-space: normal;
+    }
+    .bh-help-tip:hover .bh-help-bubble,
+    .bh-help-tip:focus-within .bh-help-bubble {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(0);
+    }
+    .bh-help-tip:hover .bh-help-icon,
+    .bh-help-tip:focus-within .bh-help-icon {
+      background: #cbd5e1;
+      color: #0f172a;
+    }
 
     /* Filter rules */
     .bh-filter-rules {
@@ -328,7 +389,15 @@ export function injectStyles() {
       margin-top: 12px;
       border: 1px solid #f1f5f9;
     }
-    .bh-rule-title { font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 8px; }
+    .bh-rule-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
     .bh-tags-selector {
       display: flex;
       gap: 8px;
@@ -472,7 +541,7 @@ export function injectStyles() {
     }
 
     /* 悬浮角标 */
-    .boss-helper-target::before {
+    .bh-recommend-mode .boss-helper-target::before {
       border-top-left-radius: 7px;
       content: attr(data-school-label);
       position: absolute;
@@ -488,12 +557,46 @@ export function injectStyles() {
       letter-spacing: 1px;
       box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
-    .boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
-    .boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
-    .boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-    .boss-helper-target.bh-target-strong::before { background: linear-gradient(135deg, #10b981, #059669); }
-    .boss-helper-target.bh-target-top50::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
-    .boss-helper-target.bh-target-overseas::before { background: linear-gradient(135deg, #64748b, #475569); }
+    .bh-recommend-mode .boss-helper-target.bh-target-C9::before { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .bh-recommend-mode .boss-helper-target.bh-target-n985::before { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .bh-recommend-mode .boss-helper-target.bh-target-n211::before { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .bh-recommend-mode .boss-helper-target.bh-target-strong::before { background: linear-gradient(135deg, #10b981, #059669); }
+    .bh-recommend-mode .boss-helper-target.bh-target-top50::before { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+    .bh-recommend-mode .boss-helper-target.bh-target-overseas::before { background: linear-gradient(135deg, #64748b, #475569); }
+
+    .bh-chat-mode .boss-helper-target {
+      --bh-chat-accent: #10b981;
+      --bh-chat-glow: rgba(16, 185, 129, 0.10);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-C9 {
+      --bh-chat-accent: #ef4444;
+      --bh-chat-glow: rgba(239, 68, 68, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-n985 {
+      --bh-chat-accent: #f59e0b;
+      --bh-chat-glow: rgba(245, 158, 11, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-n211 {
+      --bh-chat-accent: #3b82f6;
+      --bh-chat-glow: rgba(59, 130, 246, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-strong {
+      --bh-chat-accent: #10b981;
+      --bh-chat-glow: rgba(16, 185, 129, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-top50 {
+      --bh-chat-accent: #8b5cf6;
+      --bh-chat-glow: rgba(139, 92, 246, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target.bh-target-overseas {
+      --bh-chat-accent: #64748b;
+      --bh-chat-glow: rgba(100, 116, 139, 0.12);
+    }
+    .bh-chat-mode .boss-helper-target > .geek-item {
+      border-radius: 12px;
+      box-shadow: inset 4px 0 0 var(--bh-chat-accent), 0 8px 18px rgba(15, 23, 42, 0.04);
+      background-image: linear-gradient(90deg, var(--bh-chat-glow) 0%, rgba(255, 255, 255, 0) 38%);
+    }
 
     /* 内部备用小标签 */
     .bh-card-label {
@@ -515,6 +618,71 @@ export function injectStyles() {
     .bh-card-label.strong { background: #ecfdf5 !important; color: #047857 !important; border-color: #a7f3d0 !important; }
     .bh-card-label.top50 { background: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
     .bh-card-label.overseas { background: #f8fafc !important; color: #334155 !important; border-color: #cbd5e1 !important; }
+    .bh-chat-inline-label {
+      margin-left: 6px;
+      padding: 0 8px;
+      border-radius: 999px;
+      line-height: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
+      transform: translateY(-1px);
+    }
+    .bh-chat-school-label {
+      margin-left: 8px;
+      padding: 0 8px;
+      border-radius: 999px;
+      line-height: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+      vertical-align: middle;
+    }
+    .bh-chat-target-summary {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #dbeafe;
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+    }
+    .bh-chat-target-summary.C9 { border-color: #fecaca; background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); }
+    .bh-chat-target-summary.n985 { border-color: #fde68a; background: linear-gradient(135deg, #fffaf0 0%, #ffffff 100%); }
+    .bh-chat-target-summary.n211 { border-color: #bfdbfe; background: linear-gradient(135deg, #f5f9ff 0%, #ffffff 100%); }
+    .bh-chat-target-summary.strong { border-color: #a7f3d0; background: linear-gradient(135deg, #f0fdf7 0%, #ffffff 100%); }
+    .bh-chat-target-summary.top50 { border-color: #ddd6fe; background: linear-gradient(135deg, #faf7ff 0%, #ffffff 100%); }
+    .bh-chat-target-summary.overseas { border-color: #cbd5e1; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); }
+    .bh-chat-target-summary.is-mode-mismatch {
+      border-style: dashed;
+      opacity: 0.9;
+    }
+    .bh-chat-target-summary-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .bh-chat-target-summary-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #64748b;
+    }
+    .bh-chat-target-summary-badge {
+      margin-left: 0;
+      box-shadow: none;
+    }
+    .bh-chat-target-summary-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .bh-chat-target-summary-meta {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #64748b;
+    }
 
     /* ====== 全局悬浮气泡通知 ====== */
     .bh-notification {

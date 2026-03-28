@@ -6,7 +6,7 @@
 import { getConfig, updateConfig, getDailyCount, getSchoolLabelCounts, parseSchoolsText, serializeSchoolsText } from '../config.js';
 import { logger, setLogChangeCallback, getTodayKey } from '../utils.js';
 import { isCircuitBroken, resetCircuitBreaker, syncBehaviorSimulation } from '../anti-detect.js';
-import { getTargetCandidates, filterByDOM } from '../filter.js';
+import { getTargetCandidates, filterByDOM, filterChatListByDOM } from '../filter.js';
 import { startAutoGreeting, stopAutoGreeting, isGreetingRunning, setOnStatusChange } from '../greeting.js';
 import { showNotification } from './notification.js';
 import { showRecordsModal } from './records.js';
@@ -14,6 +14,15 @@ import { showRecordsModal } from './records.js';
 let statsRefreshTimer = null;
 
 // ====== 面板 HTML ======
+
+function buildHelpTip(text) {
+  return `
+    <span class="bh-help-tip" tabindex="0">
+      <span class="bh-help-icon">?</span>
+      <span class="bh-help-bubble">${text}</span>
+    </span>
+  `;
+}
 
 function buildPanelHTML(config) {
   return `
@@ -59,10 +68,10 @@ function buildPanelHTML(config) {
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>重新扫描
         </button>
         <button class="bh-btn bh-primary" id="bh-start-btn">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/></svg>启动自动分发
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><polygon points="5 3 19 12 5 21 5 3"/></svg>启动自动打招呼
         </button>
         <button class="bh-btn bh-danger" id="bh-stop-btn" style="display:none">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><rect x="6" y="6" width="12" height="12"/></svg>停止运行
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><rect x="6" y="6" width="12" height="12"/></svg>停止打招呼
         </button>
       </div>
 
@@ -91,6 +100,14 @@ function buildPanelHTML(config) {
         </div>
         <div class="bh-switch-group mb-12" style="display:flex; flex-direction:column;">
           <label class="bh-switch-label">
+            <input type="checkbox" id="bh-fresh-graduate-mode" ${config.freshGraduateMode ? 'checked' : ''} class="bh-switch-input">
+            <span class="bh-switch-ui"></span>
+            <span class="bh-label-with-help">
+              <span class="bh-switch-text">应届生模式（只看 27年应届生）</span>
+              ${buildHelpTip('开启时只高亮 27年应届生；关闭时自动排除 27年应届生。切换后立即生效。')}
+            </span>
+          </label>
+          <label class="bh-switch-label">
             <input type="checkbox" id="bh-behavior-sim" ${config.behaviorSimEnabled ? 'checked' : ''} class="bh-switch-input">
             <span class="bh-switch-ui"></span><span class="bh-switch-text">拟人化风控模拟</span>
           </label>
@@ -104,11 +121,13 @@ function buildPanelHTML(config) {
         </div>
 
         <div class="bh-filter-rules">
-          <div class="bh-rule-title">目标院校规则集</div>
+          <div class="bh-rule-title">
+            <span>目标院校规则集</span>
+            ${buildHelpTip('每行一所学校，类别用空格或逗号分隔；如果没写类别，默认归到“其他”。')}
+          </div>
           <div class="bh-tags-selector" id="bh-tags-selector"></div>
           <div style="margin-top:10px;">
             <textarea class="bh-textarea bh-school-textarea" id="bh-school-input" rows="6" placeholder="每行一所学校，格式：学校名 类别&#10;例如：清华大学 C9">${serializeSchoolsText(config.targetSchools)}</textarea>
-            <div class="bh-hint">每行一所学校，类别用空格或逗号分隔，无类别默认"其他"</div>
           </div>
         </div>
         <button class="bh-btn bh-outline bh-w-full" style="margin-top:12px" id="bh-save-settings">保存配置</button>
@@ -199,6 +218,7 @@ function bindEvents(panel, restoreBtn) {
 
   // 筛选
   document.getElementById('bh-filter-btn').addEventListener('click', () => {
+    syncFreshGraduateModeSetting();
     const count = filterByDOM();
     refreshStats();
     showNotification(`筛选完成，发现 ${count} 名目标候选人`, 'success');
@@ -226,6 +246,11 @@ function bindEvents(panel, restoreBtn) {
 
   // 保存设置
   document.getElementById('bh-save-settings').addEventListener('click', saveSettings);
+
+  // 应届生模式切换后立即生效，避免和“保存配置”产生错位
+  document.getElementById('bh-fresh-graduate-mode').addEventListener('change', () => {
+    syncFreshGraduateModeSetting({ applyImmediately: true });
+  });
 
   // 招呼语
   document.getElementById('bh-add-greeting').addEventListener('click', addGreeting);
@@ -301,7 +326,31 @@ function setupCollapse(toggleId, bodyId, arrowId) {
 
 // ====== 设置保存 ======
 
+function syncFreshGraduateModeSetting(options = {}) {
+  const { applyImmediately = false } = options;
+  const toggle = document.getElementById('bh-fresh-graduate-mode');
+  if (!toggle) return;
+
+  const nextValue = !!toggle.checked;
+  const currentValue = !!getConfig().freshGraduateMode;
+
+  if (nextValue !== currentValue) {
+    updateConfig({ freshGraduateMode: nextValue });
+  }
+
+  if (!applyImmediately) return;
+
+  if (document.body.classList.contains('bh-chat-mode')) {
+    filterChatListByDOM();
+  } else {
+    filterByDOM({ notify: false });
+  }
+  refreshStats();
+}
+
 function saveSettings() {
+  syncFreshGraduateModeSetting();
+
   // 解析 textarea 中的学校列表
   const schoolInput = document.getElementById('bh-school-input');
   const schoolText = schoolInput ? schoolInput.value : '';
@@ -330,6 +379,7 @@ function saveSettings() {
     greetInterval: parseInt(document.getElementById('bh-interval').value) || 10,
     dailyLimit: parseInt(document.getElementById('bh-daily-limit').value) || 80,
     autoLoadMore: document.getElementById('bh-auto-load').checked,
+    freshGraduateMode: document.getElementById('bh-fresh-graduate-mode').checked,
     workHoursEnabled: document.getElementById('bh-work-hours').checked,
     behaviorSimEnabled: document.getElementById('bh-behavior-sim').checked,
     runInBackground: document.getElementById('bh-run-in-bg').checked,
@@ -341,7 +391,11 @@ function saveSettings() {
 
   // 刷新标签选择器和统计
   renderLabelBadges();
-  filterByDOM({ notify: false });
+  if (document.body.classList.contains('bh-chat-mode')) {
+    filterChatListByDOM();
+  } else {
+    filterByDOM({ notify: false });
+  }
   refreshStats();
   showNotification('设置已保存', 'success');
 }

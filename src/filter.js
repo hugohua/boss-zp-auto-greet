@@ -25,11 +25,21 @@ function saveSchoolCache(cache) {
     writeStorage(SCHOOL_CACHE_KEY, cache);
 }
 
-function addToSchoolCache(uid, name, school, schoolLabel) {
+function addToSchoolCache(uid, name, school, schoolLabel, extra = {}) {
     const cache = loadSchoolCache();
-    cache[String(uid)] = { name, school, schoolLabel, ts: Date.now() };
+    const entry = {
+        name,
+        school,
+        schoolLabel,
+        experience: extra.experience || '',
+        graduateYear: extra.graduateYear || '',
+        freshGraduate: extra.freshGraduate ?? '',
+        is27FreshGraduate: !!extra.is27FreshGraduate,
+        ts: Date.now(),
+    };
+    cache[String(uid)] = entry;
     // 同时用名字做 key，便于 DOM 匹配
-    if (name) cache['name_' + name] = { uid, school, schoolLabel, ts: Date.now() };
+    if (name) cache['name_' + name] = { uid, ...entry };
     saveSchoolCache(cache);
 }
 
@@ -146,10 +156,135 @@ function extractSchoolFromText(text) {
     return match ? match[1].trim() : '';
 }
 
+function normalizeCompactText(text) {
+    return String(text || '').replace(/\s+/g, '');
+}
+
+function collectTextFragments(...values) {
+    const parts = [];
+    for (const value of values) {
+        if (Array.isArray(value)) {
+            parts.push(...value);
+        } else {
+            parts.push(value);
+        }
+    }
+
+    return parts
+        .filter((value) => value !== undefined && value !== null && value !== '')
+        .map((value) => String(value))
+        .join(' ');
+}
+
+function toFullYear(value) {
+    const year = Number(value);
+    if (!Number.isFinite(year)) return '';
+    if (year >= 2000 && year <= 2099) return year;
+    if (year >= 0 && year <= 99) return 2000 + year;
+    return '';
+}
+
+function extractGraduateYearFromDateValue(value) {
+    if (value === undefined || value === null || value === '') return '';
+
+    const matches = String(value).match(/20\d{2}/g);
+    return matches && matches.length ? Number(matches[matches.length - 1]) : '';
+}
+
+function extractGraduateYearFromEducationEntries(...collections) {
+    for (const collection of collections) {
+        const entries = Array.isArray(collection) ? collection : [collection];
+        for (const edu of entries) {
+            if (!edu || typeof edu !== 'object') continue;
+
+            const year = extractGraduateYearFromDateValue(
+                pickValue(
+                    edu.endDate,
+                    edu.graduateDate,
+                    edu.graduationDate,
+                    edu.eduEndDate,
+                    edu.endYear,
+                    edu.timeDesc,
+                ),
+            );
+
+            if (year) return year;
+        }
+    }
+
+    return '';
+}
+
+function extractGraduateYearFromText(text) {
+    if (!text || typeof text !== 'string') return '';
+
+    const normalized = normalizeCompactText(text);
+    const patterns = [
+        /(\d{2,4})年应届(?:生)?/,
+        /(\d{2,4})届(?:应届(?:生)?|毕业(?:生)?)?/,
+        /(?:应届(?:生)?|校招).{0,4}?(\d{2,4})(?:年|届)/,
+        /(?:预计|将于|于)?(\d{4})年(?:毕业|结业)/,
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalized.match(pattern);
+        if (!match) continue;
+
+        const year = toFullYear(match[1]);
+        if (year) return year;
+    }
+
+    return '';
+}
+
+function extractExperienceFromText(text) {
+    if (!text || typeof text !== 'string') return '';
+
+    const normalized = normalizeCompactText(text);
+    const patterns = [
+        /(\d{2,4}年应届生)/,
+        /(\d{2,4}届应届(?:生)?)/,
+        /(\d+(?:年|个月))(?:工作经验|经验)?/,
+        /(社招)/,
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalized.match(pattern);
+        if (match) return match[1];
+    }
+
+    return '';
+}
+
+function is27FreshGraduateCandidate(candidate) {
+    if (!candidate) return false;
+
+    const text = collectTextFragments(candidate.experience, candidate.profileText);
+    const textYear = extractGraduateYearFromText(text);
+    if (textYear === 2027) {
+        return /(应届|校招|毕业)/.test(normalizeCompactText(text));
+    }
+
+    if (candidate.freshGraduate === 0) {
+        return false;
+    }
+
+    return candidate.graduateYear === 2027;
+}
+
 function normalizeApiCandidate(geek) {
     const card = geek.geekCard || {};
     const topEdu = Array.isArray(geek.showEdus) ? geek.showEdus[0] : null;
     const cardEdu = card.geekEdu || (Array.isArray(card.geekEdus) ? card.geekEdus[0] : null) || card.geekHighestDegreeEdu || null;
+    const experience = pickValue(geek.workYears, geek.experience, card.geekWorkYear);
+    const graduateYear = extractGraduateYearFromEducationEntries(
+        topEdu,
+        cardEdu,
+        geek.showEdus,
+        geek.geekEdus,
+        card.geekEdus,
+        card.geekHighestDegreeEdu,
+    ) || extractGraduateYearFromText(experience);
 
     return {
         uid: pickValue(geek.uid, geek.userId, card.geekId),
@@ -176,12 +311,22 @@ function normalizeApiCandidate(geek) {
             card.expectPositionName,
             card.viewExpect?.positionName,
         ),
-        experience: pickValue(geek.workYears, geek.experience, card.geekWorkYear),
+        experience,
         age: pickValue(geek.age, card.ageDesc, card.ageLight?.content),
         city: pickValue(geek.cityName, geek.city, card.expectLocationName, card.viewExpect?.locationName),
         lid: pickValue(geek.lid, card.lid),
         securityId: pickValue(geek.securityId, card.securityId),
         expectId: pickValue(geek.expectId, card.expectId),
+        freshGraduate: pickValue(geek.freshGraduate, card.freshGraduate),
+        graduateYear,
+        profileText: collectTextFragments(
+            experience,
+            card.middleContent?.content,
+            card.geekDesc?.content,
+            geek.geekDesc?.content,
+            geek.applyStatusDesc,
+            card.applyStatusDesc,
+        ),
         source: 'api',
         hasApiData: true,
     };
@@ -205,6 +350,9 @@ function mergeCandidateInfo(existing, incoming) {
         lid: pickValue(incoming.lid, existing.lid),
         securityId: pickValue(incoming.securityId, existing.securityId),
         expectId: pickValue(incoming.expectId, existing.expectId),
+        freshGraduate: pickValue(incoming.freshGraduate, existing.freshGraduate),
+        graduateYear: pickValue(incoming.graduateYear, existing.graduateYear),
+        profileText: pickValue(incoming.profileText, existing.profileText),
         source: hasApiData ? 'api' : pickValue(incoming.source, existing.source),
         hasApiData,
         hasDomData,
@@ -215,7 +363,10 @@ function mergeCandidateInfo(existing, incoming) {
 
 function applyCandidateMatch(candidate, config = getConfig()) {
     const schoolMatch = matchSchool(candidate.school, config);
-    candidate.isTarget = !!schoolMatch;
+    const is27FreshGraduate = is27FreshGraduateCandidate(candidate);
+    const matchesRecruitMode = config.freshGraduateMode ? is27FreshGraduate : !is27FreshGraduate;
+    candidate.is27FreshGraduate = is27FreshGraduate;
+    candidate.isTarget = !!schoolMatch && matchesRecruitMode;
     candidate.schoolLabel = schoolMatch ? schoolMatch.label : '';
     return candidate;
 }
@@ -285,6 +436,98 @@ function clearRecommendCardHighlight(card) {
     card.querySelectorAll('.bh-card-label').forEach((label) => label.remove());
 }
 
+function clearAllRecommendHighlights() {
+    const selectors = [
+        '.boss-helper-target',
+        '[data-school-label]',
+        '.candidate-card-wrap',
+        '.recommend-card-wrap',
+        '.card-item',
+        '.candidate-card',
+        '.card-list > li',
+        '[class*="geek-card"]',
+    ];
+    const visited = new Set();
+
+    selectors.forEach((selector) => {
+        try {
+            document.querySelectorAll(selector).forEach((element) => {
+                if (visited.has(element)) return;
+                visited.add(element);
+                clearRecommendCardHighlight(element);
+            });
+        } catch (e) {
+            // 忽略无效选择器
+        }
+    });
+}
+
+function clearChatCardHighlight(card) {
+    card.classList.remove('boss-helper-target');
+    Array.from(card.classList)
+        .filter((className) => className.startsWith('bh-target-'))
+        .forEach((className) => card.classList.remove(className));
+    card.removeAttribute('data-school-label');
+    card.querySelectorAll('.bh-card-label').forEach((label) => label.remove());
+}
+
+function getChatCardLabel(card) {
+    return card.querySelector('.bh-card-label[data-bh-chat-label="1"]');
+}
+
+function hasChatCardHighlight(card) {
+    return card.classList.contains('boss-helper-target') ||
+        card.hasAttribute('data-school-label') ||
+        !!getChatCardLabel(card);
+}
+
+function syncChatCardHighlight(card, nameEl, schoolLabel) {
+    const labelClass = getSchoolLabelClass(schoolLabel);
+    const targetClass = `bh-target-${labelClass}`;
+
+    card.classList.add('boss-helper-target');
+    Array.from(card.classList)
+        .filter((className) => className.startsWith('bh-target-') && className !== targetClass)
+        .forEach((className) => card.classList.remove(className));
+    card.classList.add(targetClass);
+
+    if (card.getAttribute('data-school-label') !== schoolLabel) {
+        card.setAttribute('data-school-label', schoolLabel);
+    }
+
+    const existingLabel = getChatCardLabel(card);
+    if (!nameEl || !nameEl.parentNode) {
+        if (existingLabel) existingLabel.remove();
+        return;
+    }
+
+    const desiredClassName = `bh-card-label bh-chat-inline-label ${labelClass}`;
+    const parent = nameEl.parentNode;
+    const insertRef = nameEl.nextSibling;
+    const label = existingLabel || document.createElement('span');
+
+    if (!existingLabel) {
+        label.setAttribute('data-bh-chat-label', '1');
+        label.textContent = schoolLabel;
+        label.className = desiredClassName;
+        parent.insertBefore(label, insertRef);
+        return;
+    }
+
+    if (label.getAttribute('data-bh-chat-label') !== '1') {
+        label.setAttribute('data-bh-chat-label', '1');
+    }
+    if (label.className !== desiredClassName) {
+        label.className = desiredClassName;
+    }
+    if (label.textContent !== schoolLabel) {
+        label.textContent = schoolLabel;
+    }
+    if (label.parentNode !== parent || label.previousElementSibling !== nameEl) {
+        parent.insertBefore(label, insertRef);
+    }
+}
+
 /**
  * 从 API 响应中解析候选人数据
  */
@@ -312,7 +555,12 @@ function parseApiCandidates(zpData) {
 
         // 将目标院校候选人写入持久化缓存（供聊天页使用）
         if (info.isTarget && info.uid) {
-            addToSchoolCache(info.uid, info.name, info.school, info.schoolLabel);
+            addToSchoolCache(info.uid, info.name, info.school, info.schoolLabel, {
+                experience: info.experience,
+                graduateYear: info.graduateYear,
+                freshGraduate: info.freshGraduate,
+                is27FreshGraduate: info.is27FreshGraduate,
+            });
         }
     }
 
@@ -328,17 +576,79 @@ function parseChatGeekInfo(zpData) {
     if (!data || !data.uid) return;
 
     const config = getConfig();
-    const school = data.school || '';
+    const eduExpList = Array.isArray(data.eduExpList) ? data.eduExpList : [];
+    const topEdu = eduExpList[0] || null;
+    const experience = pickValue(
+        data.year,
+        data.workYears,
+        data.experience,
+        data.geekWorkYear,
+        data.positionStatus,
+    );
+    const school = pickValue(
+        data.school,
+        data.eduSchool,
+        data.geekEdu?.school,
+        topEdu?.school,
+        Array.isArray(data.showEdus) ? data.showEdus[0]?.school : '',
+        Array.isArray(data.geekEdus) ? data.geekEdus[0]?.school : '',
+    );
+    const graduateYear = extractGraduateYearFromEducationEntries(
+        data.geekEdu,
+        data.showEdus,
+        data.geekEdus,
+        data.eduList,
+        data.eduExpList,
+    ) || extractGraduateYearFromText(collectTextFragments(experience, data.positionStatus));
+    const info = {
+        uid: data.uid,
+        name: data.name || data.geekName || '',
+        school,
+        degree: pickValue(
+            data.edu,
+            data.degree,
+            data.geekEdu?.degree,
+            topEdu?.degree,
+        ),
+        major: pickValue(
+            data.major,
+            data.geekEdu?.major,
+            topEdu?.major,
+        ),
+        experience,
+        freshGraduate: pickValue(data.freshGraduate),
+        graduateYear,
+        positionStatus: pickValue(data.positionStatus),
+        profileText: collectTextFragments(
+            experience,
+            school,
+            data.positionStatus,
+            data.major,
+            data.edu,
+            data.applyStatusDes,
+            data.applyStatusDesc,
+            data.applyStatusDes2,
+            eduExpList.map((edu) => collectTextFragments(edu.timeDesc, edu.school, edu.major, edu.degree)),
+            data.geekDesc?.content,
+        ),
+    };
     const schoolMatch = matchSchool(school, config);
+    info.schoolMatch = schoolMatch;
+    info.is27FreshGraduate = is27FreshGraduateCandidate(info);
 
-    if (schoolMatch) {
-        addToSchoolCache(data.uid, data.geekName || data.name || '', school, schoolMatch.label);
-        logger.info(`聊天 geek/info: ${data.geekName || data.name || data.uid} → ${school} [${schoolMatch.label}]`);
+    if (schoolMatch && (config.freshGraduateMode ? info.is27FreshGraduate : !info.is27FreshGraduate)) {
+        addToSchoolCache(info.uid, info.name, school, schoolMatch.label, {
+            experience: info.experience,
+            graduateYear: info.graduateYear,
+            freshGraduate: info.freshGraduate,
+            is27FreshGraduate: info.is27FreshGraduate,
+        });
+        logger.info(`聊天 geek/info: ${info.name || info.uid} → ${school} [${schoolMatch.label}]`);
     }
 
     // 触发右侧面板高亮和左侧列表刷新
     if (onChatGeekInfoUpdated) {
-        onChatGeekInfoUpdated({ uid: data.uid, name: data.geekName || data.name || '', school, schoolMatch });
+        onChatGeekInfoUpdated(info);
     }
 }
 
@@ -364,6 +674,7 @@ export function filterByDOM(options = {}) {
     document.body.classList.add('bh-recommend-mode');
     document.body.classList.remove('bh-chat-mode');
     const config = getConfig();
+    clearAllRecommendHighlights();
     const cardSelectors = [
         '.candidate-card-wrap',
         '.recommend-card-wrap',
@@ -379,6 +690,7 @@ export function filterByDOM(options = {}) {
 
     cards.forEach(card => {
         clearRecommendCardHighlight(card);
+        const fullText = (card.innerText || card.textContent || '').trim();
 
         // 尝试多种选择器获取学校信息
         const schoolSelectors = [
@@ -423,6 +735,10 @@ export function filterByDOM(options = {}) {
             name,
             school: schoolText,
             title,
+            experience: extractExperienceFromText(fullText),
+            graduateYear: extractGraduateYearFromText(fullText),
+            freshGraduate: /应届|校招/.test(normalizeCompactText(fullText)) ? 1 : '',
+            profileText: fullText,
             source: 'dom',
             hasDomData: true,
         };
@@ -555,25 +871,16 @@ export function markGreeted(key) {
 export function filterChatListByDOM() {
     document.body.classList.add('bh-chat-mode');
     document.body.classList.remove('bh-recommend-mode');
+    const config = getConfig();
     const cache = loadSchoolCache();
     const cacheKeys = Object.keys(cache);
-    logger.info(`[聊天高亮] 开始扫描, 缓存条目数: ${cacheKeys.length}`);
-    if (cacheKeys.length > 0) {
-        logger.info(`[聊天高亮] 缓存 keys 示例: ${cacheKeys.slice(0, 6).join(', ')}`);
-    }
-
     const cards = document.querySelectorAll('.geek-item-wrap');
-    logger.info(`[聊天高亮] 找到 ${cards.length} 张 .geek-item-wrap 卡片`);
-    let newTargetCount = 0;
-    let existingTargetCount = 0;
+    let targetCount = 0;
+    let cacheHitCount = 0;
+    let disabledCount = 0;
+    let modeMismatchCount = 0;
 
-    cards.forEach((card, idx) => {
-        // 已经高亮过的跳过
-        if (card.querySelector('.bh-card-label')) {
-            existingTargetCount++;
-            return;
-        }
-
+    cards.forEach((card) => {
         // 从 data-id 提取 uid（格式为 "uid-jobSource"）
         const geekItem = card.querySelector('.geek-item');
         const dataId = geekItem ? geekItem.getAttribute('data-id') : '';
@@ -583,51 +890,44 @@ export function filterChatListByDOM() {
         const nameEl = card.querySelector('.geek-name');
         const name = nameEl ? nameEl.textContent.trim() : '';
 
-        // 调试：前5张卡片输出详细信息
-        if (idx < 5) {
-            logger.info(`[聊天高亮] 卡片${idx}: uid=${uid}, name=${name}, dataId=${dataId}`);
-        }
-
         // 优先用 uid 查缓存，其次用名字
         let cached = uid ? cache[uid] : null;
         if (!cached && name) {
             cached = cache['name_' + name];
         }
 
-        if (idx < 5) {
-            logger.info(`[聊天高亮] 卡片${idx}: 缓存命中=${!!cached}, schoolLabel=${cached ? cached.schoolLabel : 'N/A'}`);
+        if (!cached || !cached.schoolLabel) {
+            if (hasChatCardHighlight(card)) {
+                clearChatCardHighlight(card);
+            }
+            return;
         }
 
-        if (cached && cached.schoolLabel) {
-            const config = getConfig();
-            // 检查该分类是否启用
-            if (!config.enabledSchoolLabels.includes(cached.schoolLabel)) {
-                logger.info(`[聊天高亮] 卡片${idx}: ${cached.schoolLabel} 未在 enabledSchoolLabels 中启用`);
-                return;
+        cacheHitCount++;
+
+        // 检查该分类是否启用
+        if (!config.enabledSchoolLabels.includes(cached.schoolLabel)) {
+            disabledCount++;
+            if (hasChatCardHighlight(card)) {
+                clearChatCardHighlight(card);
             }
-
-            const labelClass = getSchoolLabelClass(cached.schoolLabel);
-
-            // 添加高亮类
-            card.classList.add('boss-helper-target', `bh-target-${labelClass}`);
-            card.setAttribute('data-school-label', cached.schoolLabel);
-
-            // 注入标签到 .geek-name 旁
-            if (nameEl && nameEl.parentNode) {
-                const labelSpan = document.createElement('span');
-                labelSpan.className = `bh-card-label ${labelClass}`;
-                labelSpan.textContent = cached.schoolLabel;
-                nameEl.parentNode.insertBefore(labelSpan, nameEl.nextSibling);
-            }
-
-            logger.info(`[聊天高亮] ✅ 卡片${idx}: ${name} → ${cached.school} [${cached.schoolLabel}] 已高亮`);
-            newTargetCount++;
+            return;
         }
+
+        if (config.freshGraduateMode ? !cached.is27FreshGraduate : cached.is27FreshGraduate) {
+            modeMismatchCount++;
+            if (hasChatCardHighlight(card)) {
+                clearChatCardHighlight(card);
+            }
+            return;
+        }
+
+        syncChatCardHighlight(card, nameEl, cached.schoolLabel);
+        targetCount++;
     });
 
-    const totalTargets = newTargetCount + existingTargetCount;
-    logger.info(`[聊天高亮] 扫描完成: ${cards.length} 张卡片，画面中共 ${totalTargets} 名目标院校 (新增高亮 ${newTargetCount} 名)`);
-    return totalTargets;
+    logger.info(`[聊天高亮] 扫描完成: ${cards.length} 张卡片，缓存命中 ${cacheHitCount} 张，已高亮 ${targetCount} 张，标签关闭 ${disabledCount} 张，招聘模式不匹配 ${modeMismatchCount} 张，缓存条目 ${cacheKeys.length}`);
+    return targetCount;
 }
 
 /**
@@ -635,7 +935,11 @@ export function filterChatListByDOM() {
  * 当 geek/info 接口返回目标院校时，在 conversation-main 中标注
  */
 export function highlightConversationPanel(info) {
+    document.querySelectorAll('.bh-chat-school-label, .bh-chat-target-summary').forEach(el => el.remove());
     if (!info || !info.schoolMatch) return;
+
+    const config = getConfig();
+    const matchesRecruitMode = config.freshGraduateMode ? !!info.is27FreshGraduate : !info.is27FreshGraduate;
 
     let retries = 0;
 
@@ -649,6 +953,9 @@ export function highlightConversationPanel(info) {
         }
 
         const headerNameSelectors = [
+            '.base-info-item.name-contet .base-name',
+            '.base-info-item.name-contet .name-container',
+            '.base-info-item.name-contet .name-box',
             '.chat-conversation .title-area .title',
             '.chat-conversation .name',
             '.info-header .geek-name',
@@ -675,17 +982,69 @@ export function highlightConversationPanel(info) {
             return;
         }
 
-        // 移除全局或父级内旧的高亮标记（防止重复插入）
-        document.querySelectorAll('.bh-chat-school-label').forEach(el => el.remove());
-
+        document.querySelectorAll('.bh-chat-school-label, .bh-chat-target-summary').forEach(el => el.remove());
         const labelClass = getSchoolLabelClass(info.schoolMatch.label);
         const labelSpan = document.createElement('span');
         labelSpan.className = `bh-card-label bh-chat-school-label ${labelClass}`;
-        labelSpan.textContent = `${info.schoolMatch.label} · ${info.school}`;
-        labelSpan.style.marginLeft = '8px';
+        labelSpan.textContent = info.schoolMatch.label;
 
-        targetEl.appendChild(labelSpan);
-        logger.info(`聊天窗高亮: ${info.name} → ${info.school} [${info.schoolMatch.label}]`);
+        const labelAnchor = targetEl.classList?.contains('name-box')
+            ? (targetEl.closest('.name-container') || targetEl)
+            : targetEl;
+        if (labelAnchor.parentNode) {
+            labelAnchor.parentNode.insertBefore(labelSpan, labelAnchor.nextSibling);
+        } else {
+            targetEl.appendChild(labelSpan);
+        }
+
+        const summaryContainer = panel.querySelector('.position-content') ||
+            panel.querySelector('.base-info-single-main .content') ||
+            panel.querySelector('.base-info-single-main');
+
+        if (summaryContainer) {
+            const summaryRow = document.createElement('div');
+            summaryRow.className = `bh-chat-target-summary ${labelClass}${matchesRecruitMode ? '' : ' is-mode-mismatch'}`;
+
+            const summaryHead = document.createElement('div');
+            summaryHead.className = 'bh-chat-target-summary-head';
+
+            const summaryTitle = document.createElement('span');
+            summaryTitle.className = 'bh-chat-target-summary-title';
+            summaryTitle.textContent = '目标院校：';
+
+            const summaryBadge = document.createElement('span');
+            summaryBadge.className = `bh-card-label bh-chat-target-summary-badge ${labelClass}`;
+            summaryBadge.textContent = info.schoolMatch.label;
+
+            const summaryValue = document.createElement('span');
+            summaryValue.className = 'bh-chat-target-summary-value';
+            summaryValue.textContent = info.school;
+
+            summaryHead.appendChild(summaryTitle);
+            summaryHead.appendChild(summaryBadge);
+            summaryHead.appendChild(summaryValue);
+
+            const metaParts = [
+                info.major,
+                info.degree,
+                info.experience || (info.graduateYear ? `${String(info.graduateYear).slice(-2)}届` : ''),
+                info.positionStatus,
+            ].filter(Boolean);
+
+            const summaryMeta = document.createElement('div');
+            summaryMeta.className = 'bh-chat-target-summary-meta';
+            summaryMeta.textContent = matchesRecruitMode
+                ? metaParts.join(' · ')
+                : `${metaParts.join(' · ')}${metaParts.length ? ' · ' : ''}与当前招聘模式不匹配`;
+
+            summaryRow.appendChild(summaryHead);
+            if (summaryMeta.textContent) {
+                summaryRow.appendChild(summaryMeta);
+            }
+            summaryContainer.appendChild(summaryRow);
+        }
+
+        logger.info(`聊天窗高亮: ${info.name} → ${info.school} [${info.schoolMatch.label}]${matchesRecruitMode ? '' : '（招聘模式不匹配）'}`);
     };
 
     tryInject();

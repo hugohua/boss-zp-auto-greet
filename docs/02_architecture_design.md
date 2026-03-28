@@ -7,6 +7,8 @@
 3. **执行与调度层** (`greeting.js`)：真正触发展示、发送打招呼动作的排队调度中心。
 4. **展现层** (`ui/`): 向用户展示运行状态并提供直接干预（停止/修改配置）的入口。
 
+当前架构为单入口 userscript 架构，页面内所有逻辑都从 `src/index.js` 启动；不存在 background/content-script/popup 之间的消息通信链路。
+
 ## 2. 模块依赖与初始化链路
 入口 `index.js` 定义了严格的初始化顺序（`initialize` 函数）：
 

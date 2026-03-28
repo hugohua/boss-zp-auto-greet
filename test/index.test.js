@@ -221,4 +221,44 @@ describe('index.js (SPA Routing & Initialization)', () => {
 
         expect(filterModule.filterChatListByDOM).not.toHaveBeenCalled();
     });
+
+    it('should not rescan chat list when only helper labels are injected into an existing chat card', async () => {
+        Object.defineProperty(window, 'location', {
+            value: {
+                pathname: '/web/chat/index',
+                href: 'https://www.zhipin.com/web/chat/index',
+                includes: vi.fn((str) => '/web/chat/index'.includes(str))
+            },
+            writable: true
+        });
+
+        document.body.innerHTML = `
+            <div class="user-list">
+                <div role="listitem">
+                    <div class="geek-item-wrap">
+                        <div class="geek-item" data-id="604704359-0">
+                            <span class="geek-item-top">
+                                <span class="geek-name">杜康磊</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        await import('../src/index.js');
+        filterModule.filterChatListByDOM.mockClear();
+
+        const nameWrap = document.querySelector('.geek-item-top');
+        const label = document.createElement('span');
+        label.className = 'bh-card-label bh-chat-inline-label C9';
+        label.setAttribute('data-bh-chat-label', '1');
+        label.textContent = 'C9';
+        nameWrap.appendChild(label);
+
+        await Promise.resolve();
+        vi.advanceTimersByTime(200);
+
+        expect(filterModule.filterChatListByDOM).not.toHaveBeenCalled();
+    });
 });

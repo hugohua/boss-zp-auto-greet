@@ -62,6 +62,13 @@ function isRelevantRecommendListNode(node) {
         node.querySelector?.('.candidate-card-wrap, .similar-geek-wrap');
 }
 
+function isRelevantChatListNode(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (node.matches?.('.bh-card-label, .bh-chat-school-label')) return false;
+    return node.matches?.('[role="listitem"], .geek-item-wrap, .geek-item, [data-id]') ||
+        node.querySelector?.('[role="listitem"], .geek-item-wrap, .geek-item, [data-id]');
+}
+
 function bindRecommendScrollContainer(baseElement = null) {
     if (!recommendScrollHandler) return;
 
@@ -230,7 +237,16 @@ function startChatMode() {
     chatScrollHandler = debounce(() => filterChatListByDOM(), 150);
     window.addEventListener('scroll', chatScrollHandler, { passive: true });
 
-    chatObserver = new MutationObserver(debounce(() => {
+    chatObserver = new MutationObserver(debounce((mutations) => {
+        const hasRelevantMutation = mutations.some((mutation) =>
+            mutation.type === 'childList' &&
+            (
+                Array.from(mutation.addedNodes).some(isRelevantChatListNode) ||
+                Array.from(mutation.removedNodes).some(isRelevantChatListNode)
+            )
+        );
+
+        if (!hasRelevantMutation) return;
         filterChatListByDOM();
     }, 100));
 

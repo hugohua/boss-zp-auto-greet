@@ -11,9 +11,9 @@ const DEFAULTS = {
     // 打招呼间隔（秒）
     greetInterval: 10,
     // 单日打招呼上限
-    dailyLimit: 150,
+    dailyLimit: 200,
     // 连续操作上限（到达后触发休息）
-    consecutiveLimit: 15,
+    consecutiveLimit: 20,
     // 休息时长范围（秒）
     restMinSeconds: 60,
     restMaxSeconds: 180,
@@ -29,6 +29,8 @@ const DEFAULTS = {
     runInBackground: true,
     // 风控：行为模拟开关
     behaviorSimEnabled: true,
+    // 招聘模式：开启后只看 27 年应届生，关闭后排除 27 年应届生
+    freshGraduateMode: false,
     // 招呼语模板列表
     greetingTemplates: [
         '你好，看到您的简历非常匹配我们的岗位需求，期待与您进一步沟通！',
