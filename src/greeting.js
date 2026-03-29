@@ -21,8 +21,10 @@ let isRunning = false;
 let shouldStop = false;
 let consecutiveCount = 0; // 连续操作计数
 let emptyLoadMoreAttempts = 0;
-let onStatusChange = null;
+let unresolvedTargetPasses = 0;
+const statusChangeListeners = new Set();
 const MAX_EMPTY_LOAD_MORE_ATTEMPTS = 5;
+const MAX_UNRESOLVED_TARGET_PASSES = 3;
 const RECOMMEND_CARD_SELECTOR = '.candidate-card-wrap, [class*="card-item"], [class*="recommend-card"], .card-list > li';
 const RECOMMEND_SCROLL_CONTAINER_SELECTORS = [
     '.list-body',
@@ -32,6 +34,11 @@ const RECOMMEND_SCROLL_CONTAINER_SELECTORS = [
     '.candidate-body',
 ];
 const GREET_BUTTON_TEXT_PATTERN = /^(打招呼|立即沟通|立即开聊|开聊|聊一聊)$/;
+const GREET_BUTTON_WAIT_OPTIONS = {
+    attempts: 5,
+    delayMs: 250,
+    observeTimeoutMs: 1200,
+};
 
 /**
  * 可中断的 sleep：每 500ms 检查一次 shouldStop 标志
@@ -49,7 +56,12 @@ async function interruptibleSleep(ms) {
 // ====== 公开 API ======
 
 export function setOnStatusChange(cb) {
-    onStatusChange = cb;
+    if (typeof cb !== 'function') return () => {};
+
+    statusChangeListeners.add(cb);
+    return () => {
+        statusChangeListeners.delete(cb);
+    };
 }
 
 export function isGreetingRunning() {
@@ -65,6 +77,7 @@ export async function startAutoGreeting() {
     shouldStop = false;
     consecutiveCount = 0;
     emptyLoadMoreAttempts = 0;
+    unresolvedTargetPasses = 0;
 
     logger.info('🚀 开始自动打招呼');
     notifyStatus();
@@ -85,7 +98,9 @@ export function stopAutoGreeting() {
 }
 
 function notifyStatus() {
-    if (onStatusChange) onStatusChange({ running: isRunning });
+    statusChangeListeners.forEach((listener) => {
+        listener({ running: isRunning });
+    });
 }
 
 // ====== 核心循环 ======
@@ -111,6 +126,7 @@ async function greetingLoop() {
         // 3. 获取未打招呼的目标
         const targets = getUngreetedTargets();
         if (targets.length === 0) {
+            unresolvedTargetPasses = 0;
             logger.info('当前无未打招呼的目标候选人');
             // 尝试滚动加载更多
             if (config.autoLoadMore) {
@@ -186,26 +202,49 @@ async function greetingLoop() {
             continue;
         }
 
-        // 5. 选择第一个目标（按顺序而非随机，更接近真人浏览）
-        const target = targets[0];
+        // 5. 优先选择当前 DOM 中已进入可操作状态的目标候选人
+        const actionContext = await resolveActionableTarget(targets);
+        if (!actionContext) {
+            unresolvedTargetPasses += 1;
+            logger.warn(
+                `本轮未定位到可操作的目标候选人，先等待页面稳定后重试 `
+                + `(${unresolvedTargetPasses}/${MAX_UNRESOLVED_TARGET_PASSES})`,
+            );
+            filterByDOM({ notify: false });
+
+            if (unresolvedTargetPasses >= MAX_UNRESOLVED_TARGET_PASSES) {
+                recordFailure('连续未定位到可操作目标或打招呼按钮');
+                unresolvedTargetPasses = 0;
+                if (isCircuitBroken()) break;
+            }
+
+            await interruptibleSleep(randomInt(800, 1500));
+            continue;
+        }
+        unresolvedTargetPasses = 0;
+
+        const { target, card, greetButton } = actionContext;
 
         // 6. 模拟行为：滚动 → 鼠标移动 → 等待 → 点击
-        const card = findCardElement(target);
-        if (card) {
-            simulateScrollToElement(card);
-            await interruptibleSleep(randomInt(500, 1500));
+        simulateScrollToElement(card);
+        await interruptibleSleep(randomInt(500, 1500));
+        if (shouldStop) break;
+
+        const activeButton = greetButton || await waitForGreetButton(card, GREET_BUTTON_WAIT_OPTIONS);
+        if (activeButton) {
+            simulateMouseMoveToElement(activeButton);
+            await interruptibleSleep(randomInt(300, 800));
             if (shouldStop) break;
-            const btn = await waitForGreetButton(card);
-            if (btn) {
-                simulateMouseMoveToElement(btn);
-                await interruptibleSleep(randomInt(300, 800));
-                if (shouldStop) break;
-            }
         }
 
         // 7. 执行打招呼
         const greeting = renderGreeting(target, config);
-        const success = await performGreeting(target, greeting, card);
+        const success = await performGreeting(target, greeting, card, activeButton);
+
+        if (isCircuitBroken()) {
+            logger.warn('本轮打招呼过程中触发熔断，停止当前循环');
+            break;
+        }
 
         if (success) {
             const key = target.encryptGeekId || target.geekId;
@@ -251,14 +290,15 @@ async function greetingLoop() {
 /**
  * 执行打招呼（优先 DOM 点击，备选 API）
  */
-async function performGreeting(target, greeting, card) {
+async function performGreeting(target, greeting, card, preResolvedButton = null) {
     try {
         // 方式1：找到打招呼按钮并点击
         if (card) {
-            const btn = await waitForGreetButton(card);
+            const btn = preResolvedButton || await waitForGreetButton(card, GREET_BUTTON_WAIT_OPTIONS);
             if (btn) {
                 btn.click();
                 await sleep(randomInt(800, 1500));
+                if (isCircuitBroken()) return false;
 
                 // 检查是否弹出了聊天窗口/消息输入框，需要发送招呼语
                 const sent = await trySendGreetingMessage(greeting);
@@ -267,7 +307,11 @@ async function performGreeting(target, greeting, card) {
         }
 
         // 方式2：如果卡片上没找到按钮，尝试通过页面全局查找
-        logger.warn('未找到打招呼按钮');
+        if (!card) {
+            logger.warn(`未找到候选人卡片: ${formatTargetIdentity(target)}`);
+        } else {
+            logger.warn(buildMissingGreetButtonLog(target, card));
+        }
         return false;
     } catch (e) {
         logger.error('打招呼异常:', e.message);
@@ -351,6 +395,63 @@ function findCardElement(target) {
         }
     }
     return null;
+}
+
+function formatTargetIdentity(target) {
+    const name = target?.name || '未知';
+    const school = target?.school || '未知院校';
+    const key = target?.encryptGeekId || target?.geekId || 'no-id';
+    return `${name}/${school}/${key}`;
+}
+
+function describeElementBriefly(el) {
+    if (!el || !el.tagName) return 'unknown';
+    const tag = el.tagName.toLowerCase();
+    const id = el.id ? `#${el.id}` : '';
+    const classNames = typeof el.className === 'string'
+        ? el.className.trim().split(/\s+/).filter(Boolean).slice(0, 3)
+        : [];
+    return `${tag}${id}${classNames.length ? `.${classNames.join('.')}` : ''}`;
+}
+
+function getCardPreview(card, maxLength = 80) {
+    const text = String(card?.innerText || card?.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function collectActionCandidateSummary(card, limit = 6) {
+    const actionCandidates = [];
+    const seen = new Set();
+
+    for (const root of getGreetSearchRoots(card)) {
+        const elements = root?.querySelectorAll?.('button, a, [role="button"]') || [];
+        for (const el of elements) {
+            if (seen.has(el)) continue;
+            seen.add(el);
+
+            const text = String(el.textContent || '').replace(/\s+/g, '');
+            const ka = el.getAttribute?.('ka') || '';
+            actionCandidates.push([
+                describeElementBriefly(el),
+                text ? `text=${text}` : '',
+                ka ? `ka=${ka}` : '',
+            ].filter(Boolean).join(' '));
+
+            if (actionCandidates.length >= limit) {
+                return actionCandidates.join(', ');
+            }
+        }
+    }
+
+    return actionCandidates.join(', ') || 'none';
+}
+
+function buildMissingGreetButtonLog(target, card) {
+    const preview = getCardPreview(card);
+    const actionSummary = collectActionCandidateSummary(card);
+    const previewText = preview ? `, preview=${preview}` : '';
+    return `未找到打招呼按钮: target=${formatTargetIdentity(target)}, card=${describeElementBriefly(card)}${previewText}, actions=${actionSummary}`;
 }
 
 function isAvailableActionElement(el) {
@@ -439,7 +540,11 @@ function triggerCardHover(card) {
 }
 
 async function waitForGreetButton(card, options = {}) {
-    const { attempts = 4, delayMs = 250 } = options;
+    const {
+        attempts = 4,
+        delayMs = 250,
+        observeTimeoutMs = 0,
+    } = options;
     if (!card) return null;
 
     for (let index = 0; index < attempts; index++) {
@@ -452,7 +557,94 @@ async function waitForGreetButton(card, options = {}) {
         }
     }
 
+    if (observeTimeoutMs > 0) {
+        const observed = await observeGreetButton(card, observeTimeoutMs);
+        if (observed) return observed;
+    }
+
     return findGreetButton(card);
+}
+
+async function observeGreetButton(card, timeoutMs) {
+    if (!card || timeoutMs <= 0 || typeof MutationObserver === 'undefined') {
+        return findGreetButton(card);
+    }
+
+    const searchRoots = getGreetSearchRoots(card).filter(Boolean);
+    if (searchRoots.length === 0) return findGreetButton(card);
+
+    return new Promise((resolve) => {
+        let settled = false;
+        let timer = null;
+        let observer = null;
+
+        const finish = (btn) => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            if (observer) observer.disconnect();
+            resolve(btn || null);
+        };
+
+        const checkButton = () => {
+            const btn = findGreetButton(card);
+            if (btn) {
+                finish(btn);
+                return true;
+            }
+            triggerCardHover(card);
+            return false;
+        };
+
+        observer = new MutationObserver(() => {
+            checkButton();
+        });
+
+        searchRoots.forEach((root) => {
+            if (!root?.isConnected) return;
+            observer.observe(root, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class', 'style', 'disabled', 'aria-disabled'],
+            });
+        });
+
+        if (checkButton()) return;
+
+        timer = setTimeout(() => {
+            finish(findGreetButton(card));
+        }, timeoutMs);
+    });
+}
+
+async function resolveActionableTarget(targets) {
+    const missingCards = [];
+    const missingButtons = [];
+
+    for (const target of targets) {
+        const card = findCardElement(target);
+        if (!card) {
+            missingCards.push(formatTargetIdentity(target));
+            continue;
+        }
+
+        const greetButton = await waitForGreetButton(card, GREET_BUTTON_WAIT_OPTIONS);
+        if (greetButton) {
+            return { target, card, greetButton };
+        }
+
+        missingButtons.push(buildMissingGreetButtonLog(target, card));
+    }
+
+    if (missingCards.length > 0) {
+        logger.warn(`以下目标候选人当前未定位到卡片: ${missingCards.slice(0, 5).join(' | ')}`);
+    }
+    if (missingButtons.length > 0) {
+        logger.warn(missingButtons.slice(0, 3).join(' | '));
+    }
+
+    return null;
 }
 
 /**

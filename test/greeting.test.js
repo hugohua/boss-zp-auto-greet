@@ -416,6 +416,59 @@ describe('greeting.js load-more scrolling', () => {
         expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
     });
 
+    it('should skip targets without a mounted card and greet the next actionable candidate', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: false,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+        configModule.isLimitReached.mockImplementation(() => (
+            configModule.incrementCount.mock.calls.length > 0
+                ? { limited: true, reason: 'test-stop' }
+                : { limited: false }
+        ));
+
+        const missingTarget = {
+            encryptGeekId: 'encrypt-missing',
+            name: '缺失候选人',
+            school: '北京大学',
+            title: '前端工程师',
+            experience: '3年',
+        };
+        const actionableTarget = {
+            encryptGeekId: 'encrypt-ready',
+            name: '候选人3',
+            school: '清华大学',
+            title: '后端工程师',
+            experience: '5年',
+        };
+
+        filterModule.getUngreetedTargets.mockImplementation(() => [missingTarget, actionableTarget]);
+
+        const targetCard = document.querySelectorAll('.candidate-card-wrap')[2];
+        targetCard.setAttribute('data-bh-id', 'encrypt-ready');
+        targetCard.insertAdjacentHTML('beforeend', '<button class="btn-greet">打招呼</button>');
+        const greetButton = targetCard.querySelector('.btn-greet');
+        const onClick = vi.fn();
+        greetButton.addEventListener('click', onClick);
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(5000);
+        await resultPromise;
+
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
+    });
+
     it('should keep running in background when load-more attempts are throttled', async () => {
         const greetingModule = await import('../src/greeting.js');
         const configModule = await import('../src/config.js');
@@ -471,7 +524,7 @@ describe('greeting.js load-more scrolling', () => {
         });
     }, 15000);
 
-    it('should wait briefly for a delayed greet button before failing', async () => {
+    it('should wait for a delayed greet button rendered after the card is mounted', async () => {
         const greetingModule = await import('../src/greeting.js');
         const configModule = await import('../src/config.js');
         const filterModule = await import('../src/filter.js');
@@ -509,7 +562,7 @@ describe('greeting.js load-more scrolling', () => {
         setTimeout(() => {
             outerCard.insertAdjacentHTML('beforeend', '<button class="btn-startchat">打招呼</button>');
             outerCard.querySelector('.btn-startchat').addEventListener('click', onClick);
-        }, 300);
+        }, 1400);
 
         const resultPromise = greetingModule.startAutoGreeting();
         await Promise.resolve();

@@ -14,6 +14,20 @@ let behaviorTimer = null;
 let circuitBroken = false; // 熔断状态
 let consecutiveFailures = 0;
 let apmInterceptorInstalled = false;
+let vipUpgradeAutoCloseInterval = null;
+let vipUpgradeAutoCloseAttempts = 0;
+
+const CHAT_START_API_PATH = '/wapi/zpjob/chat/start';
+const VIP_UPGRADE_TITLE_PATTERN = /免费开聊权益已升级/;
+const VIP_UPGRADE_CONTENT_PATTERN = /(聊天升级卡|额外沟通50人|主动沟通人数已达\d+人上限)/;
+const CHAT_LIMIT_TITLE_PATTERN = /(今日沟通已达上限|沟通已达上限)/;
+const CHAT_LIMIT_CONTENT_PATTERN = /(请明日再试|主动沟通已达\d+人|沟通已达\d+人|开聊不足)/;
+const VIP_UPGRADE_DIALOG_SELECTORS = [
+    '.dialog-wrap',
+    '.dialog-container',
+    '.boss-popup__wrapper',
+    '.boss-popup__content',
+].join(', ');
 
 // ====== 公开 API ======
 
@@ -30,6 +44,11 @@ export function isCircuitBroken() {
 export function resetCircuitBreaker() {
     circuitBroken = false;
     consecutiveFailures = 0;
+    if (vipUpgradeAutoCloseInterval) {
+        clearInterval(vipUpgradeAutoCloseInterval);
+        vipUpgradeAutoCloseInterval = null;
+    }
+    vipUpgradeAutoCloseAttempts = 0;
     logger.info('熔断已重置');
     syncBehaviorSimulation();
 }
@@ -61,40 +80,146 @@ export function triggerCircuitBreaker(reason) {
     stopBehaviorSimulation();
 }
 
-// ====== VIP 限制检测 ======
+function getChatStartData(payload) {
+    return payload?.zpData && typeof payload.zpData === 'object'
+        ? payload.zpData
+        : payload;
+}
 
-/**
- * 检测 VIP 限制弹窗
- */
-export function checkVipLimit() {
-    // 方法1：直接查询弹窗
-    const selectors = [
-        '.dialog-wrap[data-type="boss-dialog"]',
-        '.boss-popup__content',
-        '.limit-dialog',
-        '[class*="vip-limit"]',
-        '[class*="usage-limit"]',
-    ];
+function normalizePopupText(text) {
+    return String(text || '').replace(/\s+/g, '');
+}
 
-    for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (el && el.offsetParent !== null) {
+function isVipUpgradeTitle(text) {
+    return VIP_UPGRADE_TITLE_PATTERN.test(normalizePopupText(text));
+}
+
+function isVipUpgradeContent(text) {
+    return VIP_UPGRADE_CONTENT_PATTERN.test(normalizePopupText(text));
+}
+
+export function isVipUpgradeChatStartResult(payload) {
+    const data = getChatStartData(payload);
+
+    if (!data || Number(data.status) !== 3) return false;
+
+    const title = normalizePopupText(data.limitTitle);
+    const desc = normalizePopupText(data.stateDes || data.stateDesc);
+    return isVipUpgradeTitle(title) || isVipUpgradeContent(desc);
+}
+
+export function isChatStartLimitReachedResult(payload) {
+    const data = getChatStartData(payload);
+    if (!data || Number(data.status) !== 3) return false;
+    if (isVipUpgradeChatStartResult(data)) return false;
+
+    const title = normalizePopupText(data.limitTitle);
+    const desc = normalizePopupText(data.stateDes || data.stateDesc);
+    const shortDesc = normalizePopupText(data.blockPageData?.shortDesc?.name || data.blockPageData?.shortDesc?.tip);
+
+    if (CHAT_LIMIT_TITLE_PATTERN.test(title)) return true;
+    if (CHAT_LIMIT_CONTENT_PATTERN.test(desc) && /请明日再试|主动沟通已达\d+人|沟通已达\d+人/.test(desc)) return true;
+    if (/开聊不足/.test(shortDesc)) return true;
+
+    return false;
+}
+
+function isVipUpgradeDialog(el) {
+    if (!el || el.nodeType !== 1) return false;
+
+    const title = el.querySelector?.('.dialog-header .title, .boss-dialog_title, h3');
+    const body = el.querySelector?.('.tip-text, .dialog-body, .boss-dialog__body');
+    const text = normalizePopupText(`${title?.textContent || ''} ${body?.textContent || ''} ${el.textContent || ''}`);
+
+    if (!text) return false;
+    return isVipUpgradeTitle(text) && isVipUpgradeContent(text);
+}
+
+function isConnectedNode(node) {
+    return !!node && (node.isConnected ?? document.contains(node));
+}
+
+function collectVipUpgradeDialogCandidates(root = document) {
+    const candidates = [];
+
+    if (root?.nodeType === 1) {
+        if (!isConnectedNode(root)) return candidates;
+        candidates.push(root);
+        candidates.push(...(root.querySelectorAll?.(VIP_UPGRADE_DIALOG_SELECTORS) || []));
+        return candidates;
+    }
+
+    if (root?.querySelectorAll) {
+        candidates.push(...root.querySelectorAll(VIP_UPGRADE_DIALOG_SELECTORS));
+    }
+
+    return candidates;
+}
+
+export function closeVipUpgradeDialog(root = document) {
+    const candidates = collectVipUpgradeDialogCandidates(root);
+
+    for (const candidate of candidates) {
+        if (!isConnectedNode(candidate)) continue;
+        if (!isVipUpgradeDialog(candidate)) continue;
+        if (candidate.dataset?.bhVipDialogClosing === '1') return true;
+
+        const closeBtn = candidate.querySelector(
+            '.dialog-header .close, .close, .dialog-footer .btn.btn-sure, .btn.btn-sure, .boss-popup__close, .boss-dialog__footer .boss-dialog__button',
+        );
+
+        if (closeBtn && isConnectedNode(closeBtn) && typeof closeBtn.click === 'function') {
+            candidate.dataset.bhVipDialogClosing = '1';
+            closeBtn.click();
+            logger.info('已自动关闭聊天升级卡提示弹窗');
             return true;
         }
     }
 
-    // 方法2：检查 Shadow DOM
-    const shadowHosts = document.querySelectorAll('[class*="dialog"], [class*="popup"], [class*="modal"]');
-    for (const host of shadowHosts) {
-        if (host.shadowRoot) {
-            for (const sel of selectors) {
-                const shadowEl = host.shadowRoot.querySelector(sel);
-                if (shadowEl) return true;
-            }
-        }
+    return false;
+}
+
+function publishChatStartResult(payload) {
+    if (isVipUpgradeChatStartResult(payload)) {
+        logger.info('检测到 chat/start 聊天升级卡响应，启动弹窗自动关闭轮询');
+        scheduleVipUpgradeDialogAutoClose('chat/start 响应');
+        return;
     }
 
-    return false;
+    if (isChatStartLimitReachedResult(payload)) {
+        const data = getChatStartData(payload);
+        const reasonParts = [data?.limitTitle, data?.stateDes || data?.stateDesc, data?.blockPageData?.shortDesc?.name]
+            .filter(Boolean);
+        const reason = reasonParts.join(': ') || '今日沟通已达上限';
+
+        logger.warn(`检测到 chat/start 沟通上限响应: ${reason}`);
+        if (!circuitBroken) {
+            triggerCircuitBreaker(reason);
+            if (onVipDetected) onVipDetected();
+        }
+    }
+}
+
+function scheduleVipUpgradeDialogAutoClose(source = '未知来源') {
+    vipUpgradeAutoCloseAttempts = Math.max(vipUpgradeAutoCloseAttempts, 6);
+
+    if (vipUpgradeAutoCloseInterval) return;
+
+    vipUpgradeAutoCloseInterval = setInterval(() => {
+        if (closeVipUpgradeDialog()) {
+            clearInterval(vipUpgradeAutoCloseInterval);
+            vipUpgradeAutoCloseInterval = null;
+            vipUpgradeAutoCloseAttempts = 0;
+            return;
+        }
+
+        vipUpgradeAutoCloseAttempts -= 1;
+        if (vipUpgradeAutoCloseAttempts <= 0) {
+            clearInterval(vipUpgradeAutoCloseInterval);
+            vipUpgradeAutoCloseInterval = null;
+            logger.warn(`未能自动关闭聊天升级卡提示弹窗: ${source}`);
+        }
+    }, 1000);
 }
 
 /**
@@ -139,10 +264,6 @@ export function safetyCheck() {
         triggerCircuitBreaker('登录已过期');
         return { safe: false, reason: '登录已过期，请重新登录' };
     }
-    if (checkVipLimit()) {
-        triggerCircuitBreaker('VIP 限制');
-        return { safe: false, reason: '已达平台打招呼上限' };
-    }
     if (checkCaptcha()) {
         triggerCircuitBreaker('验证码');
         return { safe: false, reason: '检测到验证码，请手动完成' };
@@ -181,15 +302,11 @@ export function setupVipObserver(callback) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== 1) continue;
                 // 检查新增的弹窗节点
-                const isPopup = node.matches?.('[class*="dialog"], [class*="popup"], [class*="modal"]') ||
-                    node.querySelector?.('[class*="dialog"], [class*="popup"], [class*="modal"]');
+                const isPopup = node.matches?.('.dialog-wrap, .dialog-container, [class*="dialog"], [class*="popup"], [class*="modal"]') ||
+                    node.querySelector?.('.dialog-wrap, .dialog-container, [class*="dialog"], [class*="popup"], [class*="modal"]');
                 if (isPopup) {
                     // 延迟一点检查内容
                     setTimeout(() => {
-                        if (checkVipLimit()) {
-                            triggerCircuitBreaker('检测到 VIP 限制弹窗');
-                            if (onVipDetected) onVipDetected();
-                        }
                         if (checkCaptcha()) {
                             triggerCircuitBreaker('检测到验证码');
                             if (onVipDetected) onVipDetected();
@@ -330,6 +447,20 @@ export function installApmInterceptor() {
     };
 
     XMLHttpRequest.prototype.send = function (body) {
+        const isChatStart = this._bossUrl && this._bossUrl.includes(CHAT_START_API_PATH);
+        if (isChatStart) {
+            this.addEventListener('load', function () {
+                try {
+                    const data = JSON.parse(this.responseText);
+                    if (data?.code === 0 && data.zpData) {
+                        publishChatStartResult(data.zpData);
+                    }
+                } catch (e) {
+                    // ignore malformed chat/start responses
+                }
+            });
+        }
+
         // 拦截 APM 埋点和行为日志请求
         const isApmLog = this._bossUrl && this._bossMethod === 'POST' && (
             this._bossUrl.includes('/wapi/zpApm/actionLog/') ||

@@ -5,6 +5,11 @@ import * as panelModule from '../src/ui/panel.js';
 import * as stylesModule from '../src/ui/styles.js';
 import * as configModule from '../src/config.js';
 
+const greetingState = vi.hoisted(() => ({
+    running: false,
+    listeners: [],
+}));
+
 // Mocks
 vi.mock('../src/filter.js', () => ({
     installApiInterceptor: vi.fn(),
@@ -47,10 +52,29 @@ vi.mock('../src/ui/styles.js', () => ({
     injectStyles: vi.fn()
 }));
 
+vi.mock('../src/greeting.js', () => ({
+    isGreetingRunning: vi.fn(() => greetingState.running),
+    setOnStatusChange: vi.fn((cb) => {
+        if (typeof cb === 'function') {
+            greetingState.listeners.push(cb);
+        }
+        return () => {
+            greetingState.listeners = greetingState.listeners.filter((listener) => listener !== cb);
+        };
+    }),
+}));
+
+function emitGreetingStatus(running) {
+    greetingState.running = running;
+    greetingState.listeners.forEach((listener) => listener({ running }));
+}
+
 describe('index.js (SPA Routing & Initialization)', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.clearAllMocks();
+        greetingState.running = false;
+        greetingState.listeners = [];
         // Reset location
         Object.defineProperty(window, 'location', {
             value: {
@@ -208,8 +232,16 @@ describe('index.js (SPA Routing & Initialization)', () => {
         vi.advanceTimersByTime(3100);
 
         expect(panelModule.createPanel).toHaveBeenCalledTimes(1);
-        expect(filterModule.filterByDOM).toHaveBeenCalled();
         expect(panelModule.refreshStats).toHaveBeenCalled();
+
+        filterModule.filterByDOM.mockClear();
+        panelModule.refreshStats.mockClear();
+
+        emitGreetingStatus(true);
+        await Promise.resolve();
+
+        expect(filterModule.filterByDOM).toHaveBeenCalledTimes(1);
+        expect(panelModule.refreshStats).toHaveBeenCalledTimes(1);
     });
 
     it('should wait for recommend DOM before creating the panel', async () => {
@@ -266,6 +298,13 @@ describe('index.js (SPA Routing & Initialization)', () => {
 
         await import('../src/index.js');
 
+        expect(filterModule.filterByDOM).not.toHaveBeenCalled();
+
+        filterModule.filterByDOM.mockClear();
+        panelModule.refreshStats.mockClear();
+
+        emitGreetingStatus(true);
+        await Promise.resolve();
         filterModule.filterByDOM.mockClear();
         panelModule.refreshStats.mockClear();
 
@@ -314,6 +353,10 @@ describe('index.js (SPA Routing & Initialization)', () => {
         await import('../src/index.js');
         vi.advanceTimersByTime(20);
 
+        expect(filterModule.filterByDOM).not.toHaveBeenCalled();
+
+        emitGreetingStatus(true);
+        await Promise.resolve();
         filterModule.filterByDOM.mockClear();
         panelModule.refreshStats.mockClear();
 
@@ -341,6 +384,8 @@ describe('index.js (SPA Routing & Initialization)', () => {
 
         await import('../src/index.js');
 
+        emitGreetingStatus(true);
+        await Promise.resolve();
         filterModule.filterByDOM.mockClear();
         panelModule.refreshStats.mockClear();
 

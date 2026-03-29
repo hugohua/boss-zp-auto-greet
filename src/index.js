@@ -8,6 +8,7 @@ import { loadConfig } from './config.js';
 import { describeScrollContainer, findScrollableContainer, isDocumentScrollContainer, logger } from './utils.js';
 import { installApmInterceptor, setupVipObserver, syncBehaviorSimulation } from './anti-detect.js';
 import { installApiInterceptor, setOnCandidatesUpdated, setOnChatGeekInfoUpdated, filterByDOM, filterChatListByDOM, highlightConversationPanel } from './filter.js';
+import { isGreetingRunning, setOnStatusChange } from './greeting.js';
 import { injectStyles } from './ui/styles.js';
 import { createPanel, refreshStats } from './ui/panel.js';
 
@@ -22,11 +23,13 @@ let recommendPanelRetryTimer = null;
 let recommendScrollBindTimer = null;
 let recommendScrollHandler = null;
 let recommendScrollContainer = null;
+let recommendScanningActive = false;
 let chatObserver = null;
 let chatObserverRetryTimer = null;
 let chatScrollHandler = null;
 let candidateRescanTimer = null;
 let chatListRefreshTimer = null;
+let modeScanTimers = [];
 const ROUTE_WATCH_INTERVAL_MS = 250;
 const CHAT_PAGE_DOM_SELECTORS = [
     '.conversation-main',
@@ -177,6 +180,14 @@ function scheduleRecommendPanelEnsure(delay = 0) {
     }, delay);
 }
 
+function clearModeScanTimers(mode) {
+    modeScanTimers = modeScanTimers.filter((entry) => {
+        if (mode && entry.mode !== mode) return true;
+        clearTimeout(entry.timerId);
+        return false;
+    });
+}
+
 function isRelevantRecommendListNode(node) {
     if (!node || node.nodeType !== 1) return false;
     return node.matches?.('.card-item, .candidate-card-wrap, .similar-geek-wrap') ||
@@ -267,7 +278,16 @@ function initRecommendListObserver() {
     observeRecommendContainer();
 }
 
-function stopRecommendMode() {
+function stopRecommendScanning(reason = 'unknown') {
+    const hadActiveScanner = recommendScanningActive ||
+        !!recommendObserver ||
+        !!recommendObserverRetryTimer ||
+        !!recommendScrollBindTimer ||
+        !!recommendScrollHandler ||
+        !!candidateRescanTimer;
+
+    recommendScanningActive = false;
+
     if (recommendObserver) {
         recommendObserver.disconnect();
         recommendObserver = null;
@@ -278,15 +298,17 @@ function stopRecommendMode() {
         recommendObserverRetryTimer = null;
     }
 
-    if (recommendPanelRetryTimer) {
-        clearTimeout(recommendPanelRetryTimer);
-        recommendPanelRetryTimer = null;
-    }
-
     if (recommendScrollBindTimer) {
         clearTimeout(recommendScrollBindTimer);
         recommendScrollBindTimer = null;
     }
+
+    if (candidateRescanTimer) {
+        clearTimeout(candidateRescanTimer);
+        candidateRescanTimer = null;
+    }
+
+    clearModeScanTimers('recommend');
 
     if (recommendScrollContainer && recommendScrollHandler) {
         recommendScrollContainer.removeEventListener('scroll', recommendScrollHandler);
@@ -296,6 +318,46 @@ function stopRecommendMode() {
     if (recommendScrollHandler) {
         window.removeEventListener('scroll', recommendScrollHandler);
         recommendScrollHandler = null;
+    }
+
+    if (hadActiveScanner) {
+        logger.info(`推荐页扫描器已停止: ${reason}`);
+    }
+}
+
+function startRecommendScanning(trigger = 'auto-greet-start') {
+    if (currentPageMode !== 'recommend' || recommendScanningActive || !isGreetingRunning()) return;
+
+    recommendScanningActive = true;
+    recommendScrollHandler = debounce(() => scanCurrentPage('scroll'), 800);
+    window.addEventListener('scroll', recommendScrollHandler, { passive: true });
+    scheduleRecommendScrollBinding();
+    initRecommendListObserver();
+    scanCurrentPage(trigger);
+    scheduleModeScans('recommend', [2000, 5000]);
+    logger.info(`推荐页扫描器已启动: ${trigger}`);
+}
+
+function syncRecommendScanningState(trigger = 'status-change') {
+    if (currentPageMode !== 'recommend') {
+        stopRecommendScanning(trigger);
+        return;
+    }
+
+    if (isGreetingRunning()) {
+        startRecommendScanning(trigger);
+        return;
+    }
+
+    stopRecommendScanning(trigger);
+}
+
+function stopRecommendMode() {
+    stopRecommendScanning('切换出推荐页');
+
+    if (recommendPanelRetryTimer) {
+        clearTimeout(recommendPanelRetryTimer);
+        recommendPanelRetryTimer = null;
     }
 }
 
@@ -314,12 +376,16 @@ function stopChatMode() {
         window.removeEventListener('scroll', chatScrollHandler);
         chatScrollHandler = null;
     }
+
+    clearModeScanTimers('chat');
 }
 
 function scheduleCandidateRescan(delay = 500) {
+    if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
     if (candidateRescanTimer) clearTimeout(candidateRescanTimer);
     candidateRescanTimer = setTimeout(() => {
-        if (currentPageMode !== 'recommend') return;
+        candidateRescanTimer = null;
+        if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
         filterByDOM({ notify: false });
         refreshStats();
     }, delay);
@@ -334,19 +400,27 @@ function scheduleChatListRefresh(delay = 500) {
 }
 
 function scheduleModeScans(mode, delays) {
+    clearModeScanTimers(mode);
     delays.forEach((delay) => {
-        setTimeout(() => {
+        const timerId = setTimeout(() => {
+            modeScanTimers = modeScanTimers.filter((entry) => entry.timerId !== timerId);
             if (currentPageMode === mode) {
                 scanCurrentPage(`scheduled:${delay}ms`);
             }
         }, delay);
+        modeScanTimers.push({ mode, timerId });
     });
 }
 
 // 当前页面的筛选函数
 function scanCurrentPage(trigger = 'unknown') {
-    logger.info(`[扫描] scanCurrentPage trigger=${trigger}, pathname=${location.pathname}, isChatPage=${isChatPage()}`);
-    if (isChatPage()) {
+    const chatPage = isChatPage();
+    if (!chatPage && (!recommendScanningActive || !isGreetingRunning())) {
+        return;
+    }
+
+    logger.info(`[扫描] scanCurrentPage trigger=${trigger}, pathname=${location.pathname}, isChatPage=${chatPage}`);
+    if (chatPage) {
         filterChatListByDOM();
     } else {
         filterByDOM({ notify: false });
@@ -399,12 +473,8 @@ function startChatMode() {
 
 function startRecommendMode() {
     scheduleRecommendPanelEnsure();
-    recommendScrollHandler = debounce(() => scanCurrentPage('scroll'), 800);
-    window.addEventListener('scroll', recommendScrollHandler, { passive: true });
-    scheduleRecommendScrollBinding();
-    initRecommendListObserver();
     refreshStats();
-    scheduleModeScans('recommend', [2000, 5000]);
+    syncRecommendScanningState('recommend-mode-enter');
 
     logger.info('🎯 BOSS直聘智能招呼助手 v2.0 已启动');
 }
@@ -443,7 +513,11 @@ function startRouteWatcher() {
             lastRouteKey = nextRouteKey;
             logger.info(`路由/模式变化: ${oldRouteKey} → ${nextRouteKey}，mode=${currentPageMode || 'none'}→${nextMode}`);
             syncPageMode();
-            scheduleModeScans(currentPageMode, [1500, 4000]);
+            if (currentPageMode === 'chat' || (currentPageMode === 'recommend' && recommendScanningActive && isGreetingRunning())) {
+                scheduleModeScans(currentPageMode, [1500, 4000]);
+            } else {
+                clearModeScanTimers('recommend');
+            }
         }
     }, ROUTE_WATCH_INTERVAL_MS);
 }
@@ -500,6 +574,18 @@ function initialize() {
 
     // 启动 VIP 弹窗观察器
     setupVipObserver(() => {
+        refreshStats();
+    });
+
+    setOnStatusChange(({ running }) => {
+        if (currentPageMode !== 'recommend') return;
+
+        if (running) {
+            startRecommendScanning('auto-greeting-start');
+            return;
+        }
+
+        stopRecommendScanning('auto-greeting-stop');
         refreshStats();
     });
 
