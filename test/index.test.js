@@ -306,6 +306,35 @@ describe('index.js (SPA Routing & Initialization)', () => {
         expect(filterModule.filterByDOM).toHaveBeenCalled();
     });
 
+    it('should rescan recommend cards on candidates update even when auto greeting is idle', async () => {
+        greetingState.running = false;
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <ul class="card-list">
+                        <li class="card-item">
+                            <div class="candidate-card-wrap">
+                                <div class="card-inner" data-geek="target-1" data-geekid="target-1"></div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        `;
+
+        await import('../src/index.js');
+        filterModule.filterByDOM.mockClear();
+        panelModule.refreshStats.mockClear();
+
+        const onCandidatesUpdated = filterModule.setOnCandidatesUpdated.mock.calls[0][0];
+        onCandidatesUpdated();
+
+        vi.advanceTimersByTime(550);
+
+        expect(filterModule.filterByDOM).toHaveBeenCalledTimes(1);
+        expect(panelModule.refreshStats).toHaveBeenCalledTimes(1);
+    });
+
     it('should rescan recommend list when similar candidate cards are injected into .card-list', async () => {
         document.body.innerHTML = `
             <ul class="card-list">

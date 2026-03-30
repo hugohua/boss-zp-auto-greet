@@ -452,11 +452,11 @@ function stopChatMode() {
 }
 
 function scheduleCandidateRescan(delay = 500) {
-    if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
+    if (currentPageMode !== 'recommend') return;
     if (candidateRescanTimer) clearTimeout(candidateRescanTimer);
     candidateRescanTimer = setTimeout(() => {
         candidateRescanTimer = null;
-        if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
+        if (currentPageMode !== 'recommend') return;
         filterByDOM({ notify: false });
         refreshStats();
     }, delay);
