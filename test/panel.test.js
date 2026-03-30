@@ -58,7 +58,7 @@ describe('panel.js', () => {
         vi.clearAllMocks();
         mockConfig = {
             greetInterval: 10,
-            dailyLimit: 150,
+            dailyLimit: 180,
             autoLoadMore: true,
             freshGraduateMode: false,
             workHoursEnabled: false,

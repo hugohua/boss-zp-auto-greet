@@ -145,8 +145,8 @@ describe('config.js', () => {
             const config = loadConfig();
             expect(config).toBeDefined();
             expect(config.greetInterval).toBe(10);
-            expect(config.dailyLimit).toBe(150);
-            expect(config.freshGraduateMode).toBe(false);
+            expect(config.dailyLimit).toBe(180);
+            expect(config.freshGraduateMode).toBe(true);
             expect(Array.isArray(config.greetingTemplates)).toBe(true);
         });
 
@@ -162,7 +162,7 @@ describe('config.js', () => {
             const config = getConfig();
             expect(config.greetInterval).toBe(20);
             // 其他默认值不受影响
-            expect(config.dailyLimit).toBe(150);
+            expect(config.dailyLimit).toBe(180);
         });
 
         it('resetConfig 应该恢复为默认值', () => {
