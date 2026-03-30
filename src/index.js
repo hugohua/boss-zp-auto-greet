@@ -8,7 +8,7 @@ import { loadConfig } from './config.js';
 import { describeScrollContainer, findScrollableContainer, isDocumentScrollContainer, logger } from './utils.js';
 import { installApmInterceptor, setupVipObserver, syncBehaviorSimulation } from './anti-detect.js';
 import { installApiInterceptor, setOnCandidatesUpdated, setOnChatGeekInfoUpdated, filterByDOM, filterChatListByDOM, highlightConversationPanel } from './filter.js';
-import { isGreetingRunning, setOnStatusChange } from './greeting.js';
+import { isGreetingRunning, setOnStatusChange, startAutoGreeting, stopAutoGreeting } from './greeting.js';
 import { injectStyles } from './ui/styles.js';
 import { createPanel, refreshStats } from './ui/panel.js';
 
@@ -31,6 +31,8 @@ let candidateRescanTimer = null;
 let chatListRefreshTimer = null;
 let modeScanTimers = [];
 let backgroundHeartbeatTimer = null;
+let shouldResumeGreetingOnRecommendReturn = false;
+let resumeGreetingRetryTimer = null;
 const ROUTE_WATCH_INTERVAL_MS = 250;
 const BACKGROUND_HEARTBEAT_INTERVAL_MS = 15000;
 const CHAT_PAGE_DOM_SELECTORS = [
@@ -390,6 +392,46 @@ function stopRecommendMode() {
     }
 }
 
+function clearResumeGreetingRetryTimer() {
+    if (!resumeGreetingRetryTimer) return;
+    clearTimeout(resumeGreetingRetryTimer);
+    resumeGreetingRetryTimer = null;
+}
+
+function pauseGreetingForRouteSwitch() {
+    if (!isGreetingRunning()) return;
+
+    shouldResumeGreetingOnRecommendReturn = true;
+    stopAutoGreeting();
+    logger.info('检测到离开推荐页，已暂停自动打招呼，返回推荐页后将自动恢复');
+}
+
+function resumeGreetingAfterRouteSwitch(delay = 0) {
+    if (!shouldResumeGreetingOnRecommendReturn) return;
+    if (currentPageMode !== 'recommend') return;
+    if (isGreetingRunning()) {
+        shouldResumeGreetingOnRecommendReturn = false;
+        clearResumeGreetingRetryTimer();
+        return;
+    }
+
+    clearResumeGreetingRetryTimer();
+    resumeGreetingRetryTimer = setTimeout(() => {
+        resumeGreetingRetryTimer = null;
+
+        if (currentPageMode !== 'recommend' || !shouldResumeGreetingOnRecommendReturn) return;
+
+        if (isGreetingRunning()) {
+            shouldResumeGreetingOnRecommendReturn = false;
+            return;
+        }
+
+        startAutoGreeting();
+        shouldResumeGreetingOnRecommendReturn = false;
+        logger.info('已返回推荐页，自动打招呼已恢复运行');
+    }, delay);
+}
+
 function stopChatMode() {
     if (chatObserver) {
         chatObserver.disconnect();
@@ -410,11 +452,11 @@ function stopChatMode() {
 }
 
 function scheduleCandidateRescan(delay = 500) {
-    if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
+    if (currentPageMode !== 'recommend') return;
     if (candidateRescanTimer) clearTimeout(candidateRescanTimer);
     candidateRescanTimer = setTimeout(() => {
         candidateRescanTimer = null;
-        if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) return;
+        if (currentPageMode !== 'recommend') return;
         filterByDOM({ notify: false });
         refreshStats();
     }, delay);
@@ -502,6 +544,7 @@ function startChatMode() {
 
 function startRecommendMode() {
     scheduleRecommendPanelEnsure();
+    filterByDOM({ notify: false });
     refreshStats();
     syncRecommendScanningState('recommend-mode-enter');
 
@@ -512,6 +555,10 @@ function syncPageMode() {
     const nextMode = detectPageMode();
     syncBodyModeClass(nextMode);
     if (nextMode === currentPageMode) return;
+
+    if (currentPageMode === 'recommend' && nextMode !== 'recommend') {
+        pauseGreetingForRouteSwitch();
+    }
 
     if (currentPageMode === 'chat') {
         stopChatMode();
@@ -526,6 +573,7 @@ function syncPageMode() {
         startChatMode();
     } else {
         startRecommendMode();
+        resumeGreetingAfterRouteSwitch(300);
     }
 }
 
