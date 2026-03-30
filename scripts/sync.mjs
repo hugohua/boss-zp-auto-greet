@@ -131,6 +131,8 @@ async function main() {
       },
     ],
     res_body: scriptContent,
+    res_body_type: 'raw',
+    res_body_is_json_schema: false,
     interface_id: interfaceId,
     project_id: projectId,
     case_enable: caseEnable,

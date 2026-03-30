@@ -72,7 +72,7 @@ npm run build
 npm run sync
 ```
 
-`scripts/sync.mjs` 会读取 `.env` 中的 `YAPI_*` 配置，将 `dist/boss-zhipin.user.js` 作为 `res_body` 同步到指定 Mock Case。
+`scripts/sync.mjs` 会读取 `.env` 中的 `YAPI_*` 配置，将 `dist/boss-zhipin.user.js` 作为 `res_body` 同步到指定 Mock Case，并显式写入 `res_body_type=raw`，避免 `@name` 等内容被 Mock 模板引擎替换。
 
 调试时可执行：
 
