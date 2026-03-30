@@ -3,7 +3,14 @@
 本指南为了帮助在后续开发、维护和提需求给 LLM 时，能有一套标准的动作流和排错路径。
 
 ## 1. 热更新与开发流
-1. 在本地克隆代码后，执行 `npm run dev`。Rollup 会监视 `src/` 下所有文件的变化。
+### 方案 A（推荐，一键自动化）
+1. 在本地克隆代码后，执行 `npm run tm:dev`。
+2. 该命令会自动生成 `dist/tampermonkey-dev-loader.user.js`，并启动 Rollup watch。
+3. 在 Tampermonkey 的“实用工具”中导入 `tampermonkey-dev-loader.user.js`（只需一次）。
+4. 之后你只需要改代码并刷新 BOSS 页面，不需要再手动复制脚本。
+
+### 方案 B（手动桥接）
+1. 执行 `npm run dev`。Rollup 会监视 `src/` 下所有文件的变化。
 2. 在 Tampermonkey 中新建一个本地脚本，引向你机器上的 `dist` 文件：
    ```javascript
    // ==UserScript==
@@ -12,8 +19,9 @@
    // @require      file:///D:/github/boss/dist/boss-zhipin.user.js
    // ==/UserScript==
    ```
-   > ⚠️ 注意：需在 Chrome 扩展管理界面为 Tampermonkey 勾选“允许扩展程序访问文件网址(Allow access to file URLs)”。
 3. 随后在 IDE (如 VSCode) 中编写代码，保存后刷新 BOSS 直聘页面即可看到最新效果。
+
+> ⚠️ 注意：需在 Chrome 扩展管理界面为 Tampermonkey 勾选“允许扩展程序访问文件网址(Allow access to file URLs)”。
 
 补充说明：当前项目只有 userscript 这一条运行链路，没有独立的 Chrome 插件内容脚本或后台页。
 
