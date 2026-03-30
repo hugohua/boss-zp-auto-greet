@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tm:dev": "node scripts/tm-dev.mjs",
-    "sync": "node scripts/sync.mjs"
+    "sync": "node scripts/sync.mjs",
+    "publish:script": "npm version patch && npm run build && npm run sync"
   },
   "devDependencies": {
     "jsdom": "^29.0.1",
