@@ -572,4 +572,48 @@ describe('greeting.js load-more scrolling', () => {
         expect(onClick).toHaveBeenCalledTimes(1);
         expect(configModule.incrementCount).toHaveBeenCalledTimes(1);
     });
+
+    it('should not record unresolved-target failures while hidden and background mode is enabled', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+        const antiDetectModule = await import('../src/anti-detect.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: false,
+            runInBackground: true,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+
+        filterModule.getUngreetedTargets.mockReturnValue([
+            {
+                encryptGeekId: 'missing-only',
+                name: '缺失候选人',
+                school: '清华大学',
+                title: '前端工程师',
+                experience: '3年',
+            },
+        ]);
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: true,
+        });
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(12000);
+
+        expect(antiDetectModule.recordFailure).not.toHaveBeenCalled();
+        expect(greetingModule.isGreetingRunning()).toBe(true);
+
+        greetingModule.stopAutoGreeting();
+        await vi.advanceTimersByTimeAsync(2000);
+        await resultPromise;
+    });
 });

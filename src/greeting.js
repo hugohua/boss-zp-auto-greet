@@ -205,6 +205,14 @@ async function greetingLoop() {
         // 5. 优先选择当前 DOM 中已进入可操作状态的目标候选人
         const actionContext = await resolveActionableTarget(targets);
         if (!actionContext) {
+            if (document.hidden && config.runInBackground) {
+                unresolvedTargetPasses = 0;
+                logger.info('后台页暂未定位到可操作目标（可能受浏览器节流或虚拟列表影响），本次不计入连续失败次数');
+                filterByDOM({ notify: false });
+                await interruptibleSleep(randomInt(3000, 5000));
+                continue;
+            }
+
             unresolvedTargetPasses += 1;
             logger.warn(
                 `本轮未定位到可操作的目标候选人，先等待页面稳定后重试 `

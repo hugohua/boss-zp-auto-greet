@@ -30,7 +30,9 @@ let chatScrollHandler = null;
 let candidateRescanTimer = null;
 let chatListRefreshTimer = null;
 let modeScanTimers = [];
+let backgroundHeartbeatTimer = null;
 const ROUTE_WATCH_INTERVAL_MS = 250;
+const BACKGROUND_HEARTBEAT_INTERVAL_MS = 15000;
 const CHAT_PAGE_DOM_SELECTORS = [
     '.conversation-main',
     '.chat-conversation',
@@ -188,6 +190,29 @@ function clearModeScanTimers(mode) {
     });
 }
 
+function stopBackgroundHeartbeat() {
+    if (!backgroundHeartbeatTimer) return;
+    clearInterval(backgroundHeartbeatTimer);
+    backgroundHeartbeatTimer = null;
+}
+
+function startBackgroundHeartbeat() {
+    if (backgroundHeartbeatTimer) return;
+
+    backgroundHeartbeatTimer = setInterval(() => {
+        if (!document.hidden) {
+            stopBackgroundHeartbeat();
+            return;
+        }
+
+        if (currentPageMode !== 'recommend' || !recommendScanningActive || !isGreetingRunning()) {
+            return;
+        }
+
+        scanCurrentPage('background-heartbeat');
+    }, BACKGROUND_HEARTBEAT_INTERVAL_MS);
+}
+
 function isRelevantRecommendListNode(node) {
     if (!node || node.nodeType !== 1) return false;
     return node.matches?.('.card-item, .candidate-card-wrap, .similar-geek-wrap') ||
@@ -309,6 +334,7 @@ function stopRecommendScanning(reason = 'unknown') {
     }
 
     clearModeScanTimers('recommend');
+    stopBackgroundHeartbeat();
 
     if (recommendScrollContainer && recommendScrollHandler) {
         recommendScrollContainer.removeEventListener('scroll', recommendScrollHandler);
@@ -335,6 +361,9 @@ function startRecommendScanning(trigger = 'auto-greet-start') {
     initRecommendListObserver();
     scanCurrentPage(trigger);
     scheduleModeScans('recommend', [2000, 5000]);
+    if (document.hidden) {
+        startBackgroundHeartbeat();
+    }
     logger.info(`推荐页扫描器已启动: ${trigger}`);
 }
 
@@ -529,8 +558,13 @@ function bindVisibilityListener() {
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
             logger.info('页面进入后台');
+            if (currentPageMode === 'recommend' && recommendScanningActive && isGreetingRunning()) {
+                scheduleModeScans('recommend', [400, 1500]);
+                startBackgroundHeartbeat();
+            }
         } else {
             logger.info('页面回到前台');
+            stopBackgroundHeartbeat();
             setTimeout(() => scanCurrentPage('visibility'), 1000);
         }
     });
