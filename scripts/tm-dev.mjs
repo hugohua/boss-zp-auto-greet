@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const projectRoot = resolve(process.cwd());
 const distDir = resolve(projectRoot, 'dist');
 const distScriptPath = resolve(distDir, 'boss-zhipin.user.js');
-const normalizedPath = distScriptPath.replace(/\\/g, '/');
-const fileRequireUrl = `file://${normalizedPath}`;
+const fileRequireUrl = pathToFileURL(distScriptPath).href;
 const loaderPath = resolve(distDir, 'tampermonkey-dev-loader.user.js');
 
 const loaderScript = `// ==UserScript==\n// @name         BOSS直聘智能招呼助手 (本地开发桥接)\n// @namespace    http://tampermonkey.net/\n// @version      0.0.1\n// @description  开发专用：通过 @require 直连本地 dist 构建产物，避免每次手动复制\n// @author       BossHelper\n// @match        https://*.zhipin.com/web/*/recommend/*\n// @match        https://*.zhipin.com/web/chat/recommend\n// @match        https://*.zhipin.com/web/chat/index\n// @require      ${fileRequireUrl}\n// @run-at       document-end\n// ==/UserScript==\n`;
@@ -28,6 +28,7 @@ const rollupBin = resolve(projectRoot, 'node_modules', '.bin', process.platform 
 const watchProcess = spawn(rollupBin, ['-c', '--watch'], {
   cwd: projectRoot,
   stdio: 'inherit',
+  shell: process.platform === 'win32',
 });
 
 watchProcess.on('exit', (code) => {
