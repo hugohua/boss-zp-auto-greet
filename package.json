@@ -9,7 +9,8 @@
     "dev": "rollup -c --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tm:dev": "node scripts/tm-dev.mjs"
+    "tm:dev": "node scripts/tm-dev.mjs",
+    "sync": "node scripts/get-interfaces.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.0.1",
