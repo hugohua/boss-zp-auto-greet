@@ -63,3 +63,22 @@ TM_DOWNLOAD_URL=https://your-intranet/userscript/boss-zhipin.user.js
 3. 发版时只需递增 `package.json` 的 `version`（例如 `npm version patch`）；构建时会自动把该版本写入 userscript 的 `@version`。
 
 推荐发布命令：`npm version patch && npm run build`。
+
+## 5. 同步构建产物到 YApi 高级 Mock
+若 YApi 已私有化并开启了 `plugin/advmock/case/save` 接口，可使用：
+
+```bash
+npm run build
+npm run sync
+```
+
+`scripts/sync.mjs` 会读取 `.env` 中的 `YAPI_*` 配置，将 `dist/boss-zhipin.user.js` 作为 `res_body` 同步到指定 Mock Case。
+
+调试时可执行：
+
+```bash
+npm run sync -- --dry-run
+```
+
+该模式只打印请求载荷，不会真正发起写入。
+

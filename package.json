@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tm:dev": "node scripts/tm-dev.mjs",
-    "sync": "node scripts/get-interfaces.mjs"
+    "sync": "node scripts/sync.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.0.1",
