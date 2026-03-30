@@ -8,7 +8,8 @@
     "build": "rollup -c",
     "dev": "rollup -c --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tm:dev": "node scripts/tm-dev.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.0.1",
