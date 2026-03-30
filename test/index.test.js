@@ -285,6 +285,27 @@ describe('index.js (SPA Routing & Initialization)', () => {
         expect(panelModule.createPanel).toHaveBeenCalledTimes(1);
     });
 
+    it('should run an initial recommend scan for card highlighting even when auto greeting is not running', async () => {
+        greetingState.running = false;
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <ul class="card-list">
+                        <li class="card-item">
+                            <div class="candidate-card-wrap">
+                                <div class="card-inner" data-geek="target-1" data-geekid="target-1"></div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        `;
+
+        await import('../src/index.js');
+
+        expect(filterModule.filterByDOM).toHaveBeenCalled();
+    });
+
     it('should rescan recommend list when similar candidate cards are injected into .card-list', async () => {
         document.body.innerHTML = `
             <ul class="card-list">
@@ -299,8 +320,6 @@ describe('index.js (SPA Routing & Initialization)', () => {
         `;
 
         await import('../src/index.js');
-
-        expect(filterModule.filterByDOM).not.toHaveBeenCalled();
 
         filterModule.filterByDOM.mockClear();
         panelModule.refreshStats.mockClear();
@@ -354,8 +373,6 @@ describe('index.js (SPA Routing & Initialization)', () => {
 
         await import('../src/index.js');
         vi.advanceTimersByTime(20);
-
-        expect(filterModule.filterByDOM).not.toHaveBeenCalled();
 
         emitGreetingStatus(true);
         await Promise.resolve();

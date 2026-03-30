@@ -544,6 +544,7 @@ function startChatMode() {
 
 function startRecommendMode() {
     scheduleRecommendPanelEnsure();
+    filterByDOM({ notify: false });
     refreshStats();
     syncRecommendScanningState('recommend-mode-enter');
 
