@@ -54,6 +54,8 @@ vi.mock('../src/ui/styles.js', () => ({
 
 vi.mock('../src/greeting.js', () => ({
     isGreetingRunning: vi.fn(() => greetingState.running),
+    startAutoGreeting: vi.fn(),
+    stopAutoGreeting: vi.fn(),
     setOnStatusChange: vi.fn((cb) => {
         if (typeof cb === 'function') {
             greetingState.listeners.push(cb);
@@ -278,7 +280,7 @@ describe('index.js (SPA Routing & Initialization)', () => {
             </div>
         `;
 
-        vi.advanceTimersByTime(350);
+        vi.advanceTimersByTime(700);
 
         expect(panelModule.createPanel).toHaveBeenCalledTimes(1);
     });
@@ -424,6 +426,71 @@ describe('index.js (SPA Routing & Initialization)', () => {
         vi.advanceTimersByTime(200);
 
         expect(filterModule.filterChatListByDOM).not.toHaveBeenCalled();
+    });
+
+    it('should pause auto greeting when leaving recommend mode during SPA navigation', async () => {
+        const greetingModule = await import('../src/greeting.js');
+
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <ul class="card-list">
+                    <li class="card-item"><div class="candidate-card-wrap"></div></li>
+                </ul>
+            </div>
+        `;
+
+        greetingState.running = true;
+        await import('../src/index.js');
+
+        greetingModule.stopAutoGreeting.mockClear();
+
+        window.location.pathname = '/web/chat/index';
+        window.location.href = 'https://www.zhipin.com/web/chat/index';
+        document.body.innerHTML = '<div class="chat-conversation"><div class="user-list"></div></div>';
+
+        vi.advanceTimersByTime(300);
+
+        expect(greetingModule.stopAutoGreeting).toHaveBeenCalledTimes(1);
+    });
+
+    it('should auto resume greeting when returning to recommend mode after route-switch pause', async () => {
+        const greetingModule = await import('../src/greeting.js');
+
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <ul class="card-list">
+                    <li class="card-item"><div class="candidate-card-wrap"></div></li>
+                </ul>
+            </div>
+        `;
+
+        greetingState.running = true;
+        await import('../src/index.js');
+
+        greetingModule.stopAutoGreeting.mockClear();
+        greetingModule.startAutoGreeting.mockClear();
+
+        window.location.pathname = '/web/chat/index';
+        window.location.href = 'https://www.zhipin.com/web/chat/index';
+        document.body.innerHTML = '<div class="chat-conversation"><div class="user-list"></div></div>';
+        vi.advanceTimersByTime(300);
+
+        expect(greetingModule.stopAutoGreeting).toHaveBeenCalledTimes(1);
+
+        greetingState.running = false;
+        window.location.pathname = '/recommend';
+        window.location.href = 'https://www.zhipin.com/recommend';
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <ul class="card-list">
+                    <li class="card-item"><div class="candidate-card-wrap"></div></li>
+                </ul>
+            </div>
+        `;
+
+        vi.advanceTimersByTime(700);
+
+        expect(greetingModule.startAutoGreeting).toHaveBeenCalledTimes(1);
     });
 
     it('should not rescan chat list when only helper labels are injected into an existing chat card', async () => {
