@@ -495,4 +495,87 @@ describe('index.js (SPA Routing & Initialization)', () => {
         expect(filterModule.filterChatListByDOM).toHaveBeenCalledTimes(1);
         expect(filterModule.highlightConversationPanel).not.toHaveBeenCalled();
     });
+
+    it('should trigger quick rescans when page becomes hidden during active recommend scanning', async () => {
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <div id="recommend-list" class="card-list-wrap">
+                        <div class="list-body" style="overflow-y: auto;">
+                            <ul class="card-list">
+                                <li class="card-item">
+                                    <div class="candidate-card-wrap"></div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
+
+        await import('../src/index.js');
+        emitGreetingStatus(true);
+        await Promise.resolve();
+        filterModule.filterByDOM.mockClear();
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: true,
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        vi.advanceTimersByTime(450);
+        expect(filterModule.filterByDOM.mock.calls.length).toBeGreaterThan(0);
+
+        const callsAfter450ms = filterModule.filterByDOM.mock.calls.length;
+        vi.advanceTimersByTime(1100);
+        expect(filterModule.filterByDOM.mock.calls.length).toBeGreaterThan(callsAfter450ms);
+    });
+
+    it('should stop background heartbeat scans after page becomes visible again', async () => {
+        document.body.innerHTML = `
+            <div class="candidate-body">
+                <div class="recommend-list-wrap">
+                    <div id="recommend-list" class="card-list-wrap">
+                        <div class="list-body" style="overflow-y: auto;">
+                            <ul class="card-list">
+                                <li class="card-item">
+                                    <div class="candidate-card-wrap"></div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: true,
+        });
+
+        await import('../src/index.js');
+        emitGreetingStatus(true);
+        await Promise.resolve();
+        filterModule.filterByDOM.mockClear();
+
+        vi.advanceTimersByTime(15100);
+        expect(filterModule.filterByDOM.mock.calls.length).toBeGreaterThan(0);
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+        vi.advanceTimersByTime(1100);
+
+        filterModule.filterByDOM.mockClear();
+        vi.advanceTimersByTime(20000);
+        expect(filterModule.filterByDOM).not.toHaveBeenCalled();
+    });
 });
