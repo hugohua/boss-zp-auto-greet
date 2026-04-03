@@ -22,6 +22,8 @@ let shouldStop = false;
 let consecutiveCount = 0; // 连续操作计数
 let emptyLoadMoreAttempts = 0;
 let unresolvedTargetPasses = 0;
+let visibilityRecoveryBound = false;
+let lastForegroundAt = Date.now();
 const statusChangeListeners = new Set();
 const MAX_EMPTY_LOAD_MORE_ATTEMPTS = 5;
 const MAX_UNRESOLVED_TARGET_PASSES = 3;
@@ -39,6 +41,22 @@ const GREET_BUTTON_WAIT_OPTIONS = {
     delayMs: 250,
     observeTimeoutMs: 1200,
 };
+const FOREGROUND_RECOVERY_WINDOW_MS = 6000;
+
+function bindVisibilityRecoveryListener() {
+    if (visibilityRecoveryBound) return;
+    visibilityRecoveryBound = true;
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            lastForegroundAt = Date.now();
+        }
+    });
+}
+
+function isInForegroundRecoveryWindow() {
+    return !document.hidden && (Date.now() - lastForegroundAt) <= FOREGROUND_RECOVERY_WINDOW_MS;
+}
 
 /**
  * 可中断的 sleep：每 500ms 检查一次 shouldStop 标志
@@ -73,6 +91,7 @@ export function isGreetingRunning() {
  */
 export async function startAutoGreeting() {
     if (isRunning) return;
+    bindVisibilityRecoveryListener();
     isRunning = true;
     shouldStop = false;
     consecutiveCount = 0;
@@ -205,6 +224,14 @@ async function greetingLoop() {
         // 5. 优先选择当前 DOM 中已进入可操作状态的目标候选人
         const actionContext = await resolveActionableTarget(targets);
         if (!actionContext) {
+            if (isInForegroundRecoveryWindow()) {
+                unresolvedTargetPasses = 0;
+                logger.info('页面刚从后台恢复，候选卡片可能仍在回填/虚拟列表重建，暂不计入失败次数');
+                filterByDOM({ notify: false });
+                await interruptibleSleep(randomInt(1800, 2800));
+                continue;
+            }
+
             if (document.hidden && config.runInBackground) {
                 unresolvedTargetPasses = 0;
                 logger.info('后台页暂未定位到可操作目标（可能受浏览器节流或虚拟列表影响），本次不计入连续失败次数');

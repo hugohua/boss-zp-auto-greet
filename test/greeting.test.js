@@ -616,4 +616,63 @@ describe('greeting.js load-more scrolling', () => {
         await vi.advanceTimersByTimeAsync(2000);
         await resultPromise;
     });
+
+    it('should delay unresolved-target failure counting during foreground recovery window', async () => {
+        const greetingModule = await import('../src/greeting.js');
+        const configModule = await import('../src/config.js');
+        const filterModule = await import('../src/filter.js');
+        const antiDetectModule = await import('../src/anti-detect.js');
+
+        configModule.getConfig.mockReturnValue({
+            autoLoadMore: false,
+            runInBackground: false,
+            greetingTemplates: ['你好，期待与你沟通'],
+            skipProbability: 0,
+            greetInterval: 0,
+            consecutiveLimit: 99,
+            restMinSeconds: 0,
+            restMaxSeconds: 0,
+        });
+
+        filterModule.getUngreetedTargets.mockReturnValue([
+            {
+                encryptGeekId: 'missing-after-foreground',
+                name: '恢复期缺失候选人',
+                school: '清华大学',
+                title: '前端工程师',
+                experience: '3年',
+            },
+        ]);
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
+
+        const resultPromise = greetingModule.startAutoGreeting();
+        await Promise.resolve();
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: true,
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false,
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+
+        // 处于前台恢复窗口内：仅做重扫和等待，不累计失败
+        await vi.advanceTimersByTimeAsync(5900);
+        expect(antiDetectModule.recordFailure).not.toHaveBeenCalled();
+
+        // 超过恢复窗口后，恢复常规失败计数路径
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(antiDetectModule.recordFailure).toHaveBeenCalledWith('连续未定位到可操作目标或打招呼按钮');
+
+        greetingModule.stopAutoGreeting();
+        await vi.advanceTimersByTimeAsync(1000);
+        await resultPromise;
+    });
 });
